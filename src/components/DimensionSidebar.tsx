@@ -7,22 +7,23 @@ import {
   Pencil,
   Plus,
   Trash2,
+  X,
 } from "lucide-react";
 import { formatTolerance } from "../lib/dimensions";
-import type { Dimension, DimensionUnit } from "../types/project";
-
-const UNITS: DimensionUnit[] = ["mm", "in", "deg"];
+import type { Dimension } from "../types/project";
 
 export interface DimensionSidebarProps {
   dimensions: Dimension[];
   selectedDimensionId: string | null;
   editingDimensionId: string | null;
   placingDimensionId: string | null;
+  focusNameKey: number;
   hasProject: boolean;
   onAddDimension: () => void;
   onSelectDimension: (id: string) => void;
   onStartEditing: (id: string) => void;
   onFinishEditing: () => void;
+  onCancelEditing: () => void;
   onUpdateDimension: (id: string, patch: Partial<Dimension>) => void;
   onDeleteDimension: (id: string) => void;
   onStartPlacing: (id: string) => void;
@@ -32,8 +33,10 @@ export interface DimensionSidebarProps {
 interface InlineEditCardProps {
   dimension: Dimension;
   isPlacing: boolean;
+  focusNameKey: number;
   onUpdate: (id: string, patch: Partial<Dimension>) => void;
   onDone: () => void;
+  onCancel: () => void;
   onDelete: (id: string) => void;
   onStartPlacing: (id: string) => void;
   onClearMarker: (id: string) => void;
@@ -42,8 +45,10 @@ interface InlineEditCardProps {
 function InlineEditCard({
   dimension,
   isPlacing,
+  focusNameKey,
   onUpdate,
   onDone,
+  onCancel,
   onDelete,
   onStartPlacing,
   onClearMarker,
@@ -51,13 +56,22 @@ function InlineEditCard({
   const nameInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    nameInputRef.current?.focus();
-    nameInputRef.current?.select();
-  }, [dimension.id]);
+    const input = nameInputRef.current;
+    if (!input) return;
+    input.focus();
+    const len = input.value.length;
+    input.setSelectionRange(len, len);
+  }, [dimension.id, focusNameKey]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+    if (e.nativeEvent.isComposing) return;
+    if (e.key === "Escape") {
       e.preventDefault();
+      e.stopPropagation();
+      onCancel();
+    } else if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
       onDone();
     }
   };
@@ -80,6 +94,7 @@ function InlineEditCard({
         <div className="flex items-center gap-1">
           <button
             type="button"
+            tabIndex={-1}
             onClick={() => onStartPlacing(dimension.id)}
             title="Click on drawing to place or move pin"
             className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition-colors ${
@@ -95,6 +110,7 @@ function InlineEditCard({
           {dimension.marker && (
             <button
               type="button"
+              tabIndex={-1}
               title="Clear marker from drawing"
               onClick={() => onClearMarker(dimension.id)}
               className="rounded bg-neutral-800 p-1 text-neutral-400 hover:bg-neutral-700 hover:text-amber-300"
@@ -114,14 +130,14 @@ function InlineEditCard({
             ref={nameInputRef}
             type="text"
             value={dimension.name}
-            placeholder="e.g. Outer Diameter"
+            placeholder="e.g. 104 / Outer Dia"
             onChange={(e) => onUpdate(dimension.id, { name: e.target.value })}
             className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
           />
         </div>
 
-        <div className="grid grid-cols-3 gap-2">
-          <div className="col-span-2">
+        <div className="grid grid-cols-3 gap-1.5">
+          <div>
             <label className="mb-1 block text-[11px] text-neutral-400">
               Nominal
             </label>
@@ -138,29 +154,6 @@ function InlineEditCard({
 
           <div>
             <label className="mb-1 block text-[11px] text-neutral-400">
-              Unit
-            </label>
-            <select
-              value={dimension.unit}
-              onChange={(e) =>
-                onUpdate(dimension.id, {
-                  unit: e.target.value as DimensionUnit,
-                })
-              }
-              className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-100 focus:border-neutral-400 focus:outline-none"
-            >
-              {UNITS.map((u) => (
-                <option key={u} value={u}>
-                  {u}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="mb-1 block text-[11px] text-neutral-400">
               +Tol
             </label>
             <input
@@ -173,6 +166,7 @@ function InlineEditCard({
               className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
             />
           </div>
+
           <div>
             <label className="mb-1 block text-[11px] text-neutral-400">
               -Tol
@@ -193,12 +187,12 @@ function InlineEditCard({
           <label className="mb-1 block text-[11px] text-neutral-400">
             Notes
           </label>
-          <textarea
-            rows={2}
+          <input
+            type="text"
             value={dimension.notes}
             placeholder="Inspection notes, GD&T reference..."
             onChange={(e) => onUpdate(dimension.id, { notes: e.target.value })}
-            className="w-full resize-none rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
+            className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
           />
         </div>
       </div>
@@ -206,6 +200,7 @@ function InlineEditCard({
       <div className="mt-3 flex items-center justify-between border-t border-neutral-800 pt-2.5">
         <button
           type="button"
+          tabIndex={-1}
           onClick={() => onDelete(dimension.id)}
           className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] text-neutral-400 hover:bg-rose-950/70 hover:text-rose-300"
         >
@@ -213,14 +208,29 @@ function InlineEditCard({
           Delete
         </button>
 
-        <button
-          type="button"
-          onClick={onDone}
-          className="inline-flex items-center gap-1 rounded bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-950 hover:bg-white"
-        >
-          <Check className="h-3.5 w-3.5" />
-          Done
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={onCancel}
+            title="Cancel (Esc)"
+            className="inline-flex items-center gap-1 rounded bg-neutral-800 px-2.5 py-1 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white"
+          >
+            <X className="h-3.5 w-3.5" />
+            Esc
+          </button>
+
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={onDone}
+            title="Confirm (Enter)"
+            className="inline-flex items-center gap-1 rounded bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-950 hover:bg-white"
+          >
+            <Check className="h-3.5 w-3.5" />
+            Done
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -231,11 +241,13 @@ export function DimensionSidebar({
   selectedDimensionId,
   editingDimensionId,
   placingDimensionId,
+  focusNameKey,
   hasProject,
   onAddDimension,
   onSelectDimension,
   onStartEditing,
   onFinishEditing,
+  onCancelEditing,
   onUpdateDimension,
   onDeleteDimension,
   onStartPlacing,
@@ -291,8 +303,10 @@ export function DimensionSidebar({
                         <InlineEditCard
                           dimension={dim}
                           isPlacing={isPlacing}
+                          focusNameKey={focusNameKey}
                           onUpdate={onUpdateDimension}
                           onDone={onFinishEditing}
+                          onCancel={onCancelEditing}
                           onDelete={onDeleteDimension}
                           onStartPlacing={onStartPlacing}
                           onClearMarker={onClearMarker}

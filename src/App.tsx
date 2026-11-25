@@ -43,9 +43,15 @@ export default function App() {
   const [placingDimensionId, setPlacingDimensionId] = useState<string | null>(
     null,
   );
+  const [focusNameKey, setFocusNameKey] = useState<number>(0);
   const [isDirty, setIsDirty] = useState<boolean>(false);
   const [status, setStatus] = useState<StatusMessage | null>(null);
 
+  const editingOriginRef = useRef<{
+    id: string;
+    isNew: boolean;
+    snapshot: Dimension | null;
+  } | null>(null);
   const isDirtyRef = useRef<boolean>(isDirty);
   isDirtyRef.current = isDirty;
   const isSavingRef = useRef<boolean>(false);
@@ -220,22 +226,6 @@ export default function App() {
     showStatus("info", "Project closed");
   }, [project, confirmDiscardIfDirty, showStatus]);
 
-  // Global keyboard shortcuts: Esc cancels placement, Cmd/Ctrl+S saves
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && placingDimensionId) {
-        setPlacingDimensionId(null);
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
-        if (project) {
-          e.preventDefault();
-          void persistProject(false);
-        }
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [placingDimensionId, project, persistProject]);
-
   const handlePageCountLoaded = useCallback((count: number) => {
     setProject((prev) => {
       if (!prev || prev.drawings.length === 0) return prev;
@@ -249,6 +239,7 @@ export default function App() {
   const handleAddDimension = useCallback(() => {
     if (!project) return;
     const nextDim = createDimension(project.dimensions);
+    editingOriginRef.current = { id: nextDim.id, isNew: true, snapshot: null };
     setProject({
       ...project,
       dimensions: [nextDim, ...project.dimensions],
@@ -256,18 +247,88 @@ export default function App() {
     setSelectedDimensionId(nextDim.id);
     setEditingDimensionId(nextDim.id);
     setPlacingDimensionId(nextDim.id);
+    setFocusNameKey((k) => k + 1);
     markDirty();
   }, [project, markDirty]);
 
-  const handleStartEditing = useCallback((id: string) => {
-    setSelectedDimensionId(id);
-    setEditingDimensionId(id);
-  }, []);
+  const handleStartEditing = useCallback(
+    (id: string) => {
+      const existing = project?.dimensions.find((d) => d.id === id) ?? null;
+      editingOriginRef.current = {
+        id,
+        isNew: false,
+        snapshot: existing ? { ...existing, marker: existing.marker ? { ...existing.marker } : null } : null,
+      };
+      setSelectedDimensionId(id);
+      setEditingDimensionId(id);
+      setFocusNameKey((k) => k + 1);
+    },
+    [project],
+  );
 
   const handleFinishEditing = useCallback(() => {
+    editingOriginRef.current = null;
     setEditingDimensionId(null);
     setPlacingDimensionId(null);
   }, []);
+
+  const handleCancelEditing = useCallback(() => {
+    const origin = editingOriginRef.current;
+    editingOriginRef.current = null;
+    if (origin) {
+      if (origin.isNew) {
+        setProject((prev) =>
+          prev
+            ? {
+                ...prev,
+                dimensions: prev.dimensions.filter((d) => d.id !== origin.id),
+              }
+            : prev,
+        );
+        setSelectedDimensionId((prev) => (prev === origin.id ? null : prev));
+      } else if (origin.snapshot) {
+        const snap = origin.snapshot;
+        setProject((prev) =>
+          prev
+            ? {
+                ...prev,
+                dimensions: prev.dimensions.map((d) =>
+                  d.id === origin.id ? snap : d,
+                ),
+              }
+            : prev,
+        );
+      }
+    }
+    setEditingDimensionId(null);
+    setPlacingDimensionId(null);
+  }, []);
+
+  // Global keyboard shortcuts: Esc cancels editing/placement, Cmd/Ctrl+S saves
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (editingDimensionId) {
+          handleCancelEditing();
+        } else if (placingDimensionId) {
+          setPlacingDimensionId(null);
+        }
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        if (project) {
+          e.preventDefault();
+          void persistProject(false);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    editingDimensionId,
+    placingDimensionId,
+    project,
+    handleCancelEditing,
+    persistProject,
+  ]);
 
   const handleSelectDimension = useCallback(
     (id: string) => {
@@ -327,9 +388,12 @@ export default function App() {
       });
       setPlacingDimensionId(null);
       setSelectedDimensionId(dimensionId);
+      if (editingDimensionId === dimensionId) {
+        setFocusNameKey((k) => k + 1);
+      }
       markDirty();
     },
-    [markDirty],
+    [editingDimensionId, markDirty],
   );
 
   const handleMoveMarker = useCallback(
@@ -405,11 +469,13 @@ export default function App() {
             selectedDimensionId={selectedDimensionId}
             editingDimensionId={editingDimensionId}
             placingDimensionId={placingDimensionId}
+            focusNameKey={focusNameKey}
             hasProject={project !== null}
             onAddDimension={handleAddDimension}
             onSelectDimension={handleSelectDimension}
             onStartEditing={handleStartEditing}
             onFinishEditing={handleFinishEditing}
+            onCancelEditing={handleCancelEditing}
             onUpdateDimension={handleUpdateDimension}
             onDeleteDimension={handleDeleteDimension}
             onStartPlacing={setPlacingDimensionId}
