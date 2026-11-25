@@ -4,8 +4,8 @@ import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import { FilePlus2, FolderOpen } from "lucide-react";
 import { DimensionEditor } from "./components/DimensionEditor";
 import { DimensionSidebar } from "./components/DimensionSidebar";
+import { MenuBar } from "./components/MenuBar";
 import { PdfViewer } from "./components/PdfViewer";
-import { TopToolbar } from "./components/TopToolbar";
 import { createDimension, createProjectFromPdf } from "./lib/dimensions";
 import {
   shouldBlockWindowClose,
@@ -201,6 +201,19 @@ export default function App() {
     void persistProject(true);
   }, [persistProject]);
 
+  const handleCloseProject = useCallback(() => {
+    if (!project) return;
+    if (!confirmDiscardIfDirty()) return;
+    setProject(null);
+    setProjectFilePath(null);
+    setPdfBytes(null);
+    setCurrentPage(1);
+    setSelectedDimensionId(null);
+    setPlacingDimensionId(null);
+    setIsDirty(false);
+    showStatus("info", "Project closed");
+  }, [project, confirmDiscardIfDirty, showStatus]);
+
   // Global keyboard shortcuts: Esc cancels placement, Cmd/Ctrl+S saves
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -339,20 +352,15 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col bg-neutral-950 text-neutral-100">
-      <TopToolbar
+      <MenuBar
         projectName={project?.name ?? null}
         isDirty={isDirty}
         hasProject={project !== null}
-        currentPage={currentPage}
-        pageCount={pageCount}
-        zoom={zoom}
         onOpenPdf={() => void handleOpenPdf()}
         onOpenProject={() => void handleOpenProject()}
         onSave={handleSave}
         onSaveAs={handleSaveAs}
-        onPageChange={setCurrentPage}
-        onZoomChange={setZoom}
-        onFitToView={() => setFitRequestKey((k) => k + 1)}
+        onCloseProject={handleCloseProject}
       />
 
       {status && (
@@ -401,14 +409,18 @@ export default function App() {
           <PdfViewer
             pdfBytes={pdfBytes}
             drawingId={activeDrawing?.id ?? null}
+            drawingFilename={activeDrawing?.filename ?? null}
             currentPage={currentPage}
+            pageCount={pageCount}
             zoom={zoom}
             fitRequestKey={fitRequestKey}
             dimensions={project.dimensions}
             selectedDimensionId={selectedDimensionId}
             placingDimensionId={placingDimensionId}
             onPageCountLoaded={handlePageCountLoaded}
+            onPageChange={setCurrentPage}
             onZoomChange={setZoom}
+            onFitToView={() => setFitRequestKey((k) => k + 1)}
             onPlaceMarker={handlePlaceMarker}
             onSelectDimension={handleSelectDimension}
             onMoveMarker={handleMoveMarker}

@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-import { Crosshair, X } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Crosshair,
+  Maximize2,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 import { computeFitZoom, shouldApplyFit } from "../lib/viewerState";
 import { BalloonOverlay } from "./BalloonOverlay";
 import type { Dimension, MarkerPosition } from "../types/project";
@@ -11,14 +19,18 @@ GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 export interface PdfViewerProps {
   pdfBytes: Uint8Array | null;
   drawingId: string | null;
+  drawingFilename: string | null;
   currentPage: number;
+  pageCount: number;
   zoom: number;
   fitRequestKey: number;
   dimensions: Dimension[];
   selectedDimensionId: string | null;
   placingDimensionId: string | null;
   onPageCountLoaded: (pageCount: number) => void;
+  onPageChange: (page: number) => void;
   onZoomChange: (zoom: number) => void;
+  onFitToView: () => void;
   onPlaceMarker: (dimensionId: string, marker: MarkerPosition) => void;
   onSelectDimension: (dimensionId: string) => void;
   onMoveMarker: (dimensionId: string, x: number, y: number) => void;
@@ -28,14 +40,18 @@ export interface PdfViewerProps {
 export function PdfViewer({
   pdfBytes,
   drawingId,
+  drawingFilename,
   currentPage,
+  pageCount,
   zoom,
   fitRequestKey,
   dimensions,
   selectedDimensionId,
   placingDimensionId,
   onPageCountLoaded,
+  onPageChange,
   onZoomChange,
+  onFitToView,
   onPlaceMarker,
   onSelectDimension,
   onMoveMarker,
@@ -212,8 +228,81 @@ export function PdfViewer({
     ? dimensions.find((d) => d.id === placingDimensionId) ?? null
     : null;
 
+  const stepZoom = (delta: number) => {
+    const next = Math.min(
+      4,
+      Math.max(0.25, Math.round((zoom + delta) * 100) / 100),
+    );
+    onZoomChange(next);
+  };
+
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden bg-neutral-900">
+      <div className="flex h-10 shrink-0 items-center justify-between border-b border-neutral-800 bg-neutral-950/90 px-3 text-xs text-neutral-300">
+        <span className="truncate font-mono text-[11px] text-neutral-400">
+          {drawingFilename ?? "Drawing"}
+        </span>
+
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 rounded bg-neutral-900 px-1 py-0.5 ring-1 ring-neutral-800">
+            <button
+              type="button"
+              disabled={currentPage <= 1}
+              onClick={() => onPageChange(currentPage - 1)}
+              aria-label="Previous page"
+              className="rounded p-1 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:text-neutral-600"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+            <span className="min-w-[72px] text-center font-mono text-[11px] text-neutral-300">
+              Page {currentPage} / {pageCount}
+            </span>
+            <button
+              type="button"
+              disabled={currentPage >= pageCount}
+              onClick={() => onPageChange(currentPage + 1)}
+              aria-label="Next page"
+              className="rounded p-1 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:text-neutral-600"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1 rounded bg-neutral-900 px-1 py-0.5 ring-1 ring-neutral-800">
+            <button
+              type="button"
+              disabled={zoom <= 0.25}
+              onClick={() => stepZoom(-0.25)}
+              aria-label="Zoom out"
+              className="rounded p-1 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:text-neutral-600"
+            >
+              <ZoomOut className="h-3.5 w-3.5" />
+            </button>
+            <span className="min-w-[44px] text-center font-mono text-[11px] text-neutral-300">
+              {Math.round(zoom * 100)}%
+            </span>
+            <button
+              type="button"
+              disabled={zoom >= 4}
+              onClick={() => stepZoom(0.25)}
+              aria-label="Zoom in"
+              className="rounded p-1 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:text-neutral-600"
+            >
+              <ZoomIn className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={onFitToView}
+              title="Fit drawing to viewport"
+              className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11px] hover:bg-neutral-800"
+            >
+              <Maximize2 className="h-3 w-3" />
+              Fit
+            </button>
+          </div>
+        </div>
+      </div>
+
       {placingDimension && (
         <div className="z-30 flex items-center justify-between border-b border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-medium text-blue-100">
           <div className="flex items-center gap-2">
