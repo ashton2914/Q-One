@@ -1,0 +1,80 @@
+import { invoke } from "@tauri-apps/api/core";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import type {
+  ImportedPdfPayload,
+  OpenedProjectPayload,
+  ProjectData,
+} from "../types/project";
+
+interface RawImportedPdfPayload {
+  drawingId: string;
+  filename: string;
+  pdfBytes: number[];
+}
+
+interface RawOpenedProjectPayload {
+  project: ProjectData;
+  pdfBytes: number[];
+}
+
+export async function pickPdfFile(): Promise<string | null> {
+  const selected = await open({
+    title: "Open PDF Drawing",
+    multiple: false,
+    directory: false,
+    filters: [{ name: "PDF Drawing", extensions: ["pdf"] }],
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+export async function pickOpenProjectFile(): Promise<string | null> {
+  const selected = await open({
+    title: "Open DM-One Project",
+    multiple: false,
+    directory: false,
+    filters: [{ name: "DM-One Project", extensions: ["dmone"] }],
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+export async function pickSaveProjectFile(
+  defaultName: string,
+): Promise<string | null> {
+  const safeBase = defaultName.trim() || "project";
+  const defaultPath = safeBase.toLowerCase().endsWith(".dmone")
+    ? safeBase
+    : `${safeBase}.dmone`;
+  const selected = await save({
+    title: "Save DM-One Project",
+    defaultPath,
+    filters: [{ name: "DM-One Project", extensions: ["dmone"] }],
+  });
+  if (!selected) return null;
+  return selected.toLowerCase().endsWith(".dmone")
+    ? selected
+    : `${selected}.dmone`;
+}
+
+export async function importPdf(path: string): Promise<ImportedPdfPayload> {
+  const raw = await invoke<RawImportedPdfPayload>("import_pdf", { path });
+  return {
+    drawingId: raw.drawingId,
+    filename: raw.filename,
+    pdfBytes: new Uint8Array(raw.pdfBytes),
+  };
+}
+
+export async function saveProject(
+  path: string,
+  project: ProjectData,
+): Promise<void> {
+  await invoke<void>("save_project", { path, project });
+}
+
+export async function openProject(path: string): Promise<OpenedProjectPayload> {
+  const raw = await invoke<RawOpenedProjectPayload>("open_project", { path });
+  return {
+    project: raw.project,
+    pdfBytes: new Uint8Array(raw.pdfBytes),
+  };
+}
