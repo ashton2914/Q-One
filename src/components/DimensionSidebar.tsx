@@ -96,7 +96,7 @@ function InlineEditCard({
             type="button"
             tabIndex={-1}
             onClick={() => onStartPlacing(dimension.id)}
-            title="Click on drawing to place or move pin"
+            title="Drag on drawing to select or redraw region"
             className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition-colors ${
               isPlacing
                 ? "bg-blue-600 text-white"
@@ -104,7 +104,7 @@ function InlineEditCard({
             }`}
           >
             <Crosshair className="h-3 w-3" />
-            {dimension.marker ? "Move Pin" : "Place Pin"}
+            {dimension.marker ? "Redraw" : "Mark Area"}
           </button>
 
           {dimension.marker && (

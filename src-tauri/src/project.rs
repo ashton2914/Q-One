@@ -10,6 +10,14 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 
+fn default_marker_width() -> f64 {
+    0.04
+}
+
+fn default_marker_height() -> f64 {
+    0.025
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct MarkerPosition {
@@ -17,6 +25,10 @@ pub struct MarkerPosition {
     pub page: u32,
     pub x: f64,
     pub y: f64,
+    #[serde(default = "default_marker_width")]
+    pub width: f64,
+    #[serde(default = "default_marker_height")]
+    pub height: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -334,6 +346,8 @@ mod tests {
                         page: 1,
                         x: 0.4125,
                         y: 0.3082,
+                        width: 0.08,
+                        height: 0.035,
                     }),
                 },
                 Dimension {
@@ -387,6 +401,8 @@ mod tests {
             page: 2,
             x: 0.75,
             y: 0.25,
+            width: 0.06,
+            height: 0.03,
         });
         write_dmone_atomic(&file_path, &project, &pdf).unwrap();
 

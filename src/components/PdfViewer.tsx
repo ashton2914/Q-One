@@ -61,7 +61,13 @@ export interface PdfViewerProps {
   onFitToView: () => void;
   onPlaceMarker: (dimensionId: string, marker: MarkerPosition) => void;
   onSelectDimension: (dimensionId: string) => void;
-  onMoveMarker: (dimensionId: string, x: number, y: number) => void;
+  onMoveMarker: (
+    dimensionId: string,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ) => void;
   onCancelPlacing: () => void;
 }
 
@@ -80,7 +86,13 @@ interface PdfPageItemProps {
   registerPageEl: (page: number, el: HTMLDivElement | null) => void;
   onPlaceMarker: (dimensionId: string, marker: MarkerPosition) => void;
   onSelectDimension: (dimensionId: string) => void;
-  onMoveMarker: (dimensionId: string, x: number, y: number) => void;
+  onMoveMarker: (
+    dimensionId: string,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ) => void;
 }
 
 interface DetailTileRect extends PageCrop {
@@ -909,7 +921,7 @@ export function PdfViewer({
           <div className="flex items-center gap-2">
             <Crosshair className="h-4 w-4 text-blue-400" />
             <span>
-              Click on the drawing to place Balloon #{placingDimension.balloonNumber}
+              Drag on the drawing to box #{placingDimension.balloonNumber}
               {placingDimension.name ? ` (${placingDimension.name})` : ""} — Press Esc to cancel
             </span>
           </div>

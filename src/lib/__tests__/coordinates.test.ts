@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   clamp01,
+  clampMovedRect,
   clientPointToNormalized,
   normalizedToPixel,
+  normalizeRectFromPoints,
 } from "../coordinates";
 
 describe("coordinates", () => {
@@ -50,5 +52,22 @@ describe("coordinates", () => {
       expect(back!.x).toBeCloseTo(0.35, 6);
       expect(back!.y).toBeCloseTo(0.72, 6);
     }
+  });
+
+  it("normalizes drag rectangles in any direction and clamps inside [0, 1]", () => {
+    // Bottom-right to top-left drag
+    const r = normalizeRectFromPoints(0.6, 0.5, 0.2, 0.3);
+    expect(r.x).toBeCloseTo(0.2, 6);
+    expect(r.y).toBeCloseTo(0.3, 6);
+    expect(r.width).toBeCloseTo(0.4, 6);
+    expect(r.height).toBeCloseTo(0.2, 6);
+
+    // Clamps moved rectangle within [0, 1] without shrinking its size
+    expect(clampMovedRect(-0.1, 0.95, 0.2, 0.1)).toEqual({
+      x: 0,
+      y: 0.9,
+      width: 0.2,
+      height: 0.1,
+    });
   });
 });

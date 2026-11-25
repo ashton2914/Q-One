@@ -400,14 +400,20 @@ export default function App() {
   );
 
   const handleMoveMarker = useCallback(
-    (dimensionId: string, x: number, y: number) => {
+    (
+      dimensionId: string,
+      x: number,
+      y: number,
+      width: number,
+      height: number,
+    ) => {
       setProject((prev) => {
         if (!prev) return prev;
         return {
           ...prev,
           dimensions: prev.dimensions.map((d) =>
             d.id === dimensionId && d.marker
-              ? { ...d, marker: { ...d.marker, x, y } }
+              ? { ...d, marker: { ...d.marker, x, y, width, height } }
               : d,
           ),
         };

@@ -5,6 +5,8 @@ export interface MarkerPosition {
   page: number;
   x: number;
   y: number;
+  width: number;
+  height: number;
 }
 
 export interface Dimension {
