@@ -915,7 +915,7 @@ export default function App() {
     setPlacingDimensionId(null);
   }, [editingDimensionId, project, activeDrawingDimensions]);
 
-  // Global keyboard shortcuts: Esc cancels editing/placement, Cmd/Ctrl+S saves
+  // Global keyboard shortcuts: Esc cancels editing/placement, Cmd/Ctrl+S saves, N adds dimension in Dimensions view
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -929,14 +929,41 @@ export default function App() {
           e.preventDefault();
           void persistProject(false);
         }
+      } else if (
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.isComposing &&
+        e.key.toLowerCase() === "n" &&
+        activeModule === "drawing" &&
+        drawingSidebarView === "dimensions" &&
+        activeDrawingId !== null &&
+        !editingDimensionId
+      ) {
+        const target = e.target as HTMLElement | null;
+        const tag = target?.tagName;
+        if (
+          tag === "INPUT" ||
+          tag === "TEXTAREA" ||
+          tag === "SELECT" ||
+          target?.isContentEditable
+        ) {
+          return;
+        }
+        e.preventDefault();
+        handleAddDimension();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
+    activeModule,
+    drawingSidebarView,
+    activeDrawingId,
     editingDimensionId,
     placingDimensionId,
     project,
+    handleAddDimension,
     handleCancelEditing,
     persistProject,
   ]);

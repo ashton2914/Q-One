@@ -442,10 +442,14 @@ export function DimensionSidebar({
             <button
               type="button"
               onClick={onAddDimension}
+              title="Add Dimension (N)"
               className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-neutral-700 bg-neutral-900/70 px-3 py-2 text-xs font-medium text-neutral-200 transition-colors hover:border-neutral-500 hover:bg-neutral-800 hover:text-white"
             >
               <Plus className="h-3.5 w-3.5" />
-              Add Dimension
+              <span>Add Dimension</span>
+              <kbd className="ml-1 rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-[10px] text-neutral-400 ring-1 ring-neutral-700">
+                N
+              </kbd>
             </button>
 
             {dimensions.length === 0 ? (
