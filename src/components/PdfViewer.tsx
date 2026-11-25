@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -101,7 +102,7 @@ interface DetailTileRect extends PageCrop {
   zoom: number;
 }
 
-function PdfPageItem({
+const PdfPageItem = memo(function PdfPageItem({
   pdfDoc,
   pageNumber,
   baseSize,
@@ -122,8 +123,10 @@ function PdfPageItem({
   const baseCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const detailCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const baseScaleRef = useRef<number>(0);
+  const detailTileRef = useRef<DetailTileRect | null>(null);
   const [isVisible, setIsVisible] = useState<boolean>(pageNumber <= 2);
   const [detailTile, setDetailTile] = useState<DetailTileRect | null>(null);
+  detailTileRef.current = detailTile;
 
   const width = Math.max(1, Math.round(baseSize.width * displayZoom));
   const height = Math.max(1, Math.round(baseSize.height * displayZoom));
@@ -266,11 +269,30 @@ function PdfPageItem({
       return;
     }
 
-    const crop = computeVisiblePageCrop(
-      wrapperEl.getBoundingClientRect(),
-      scrollContainer.getBoundingClientRect(),
-      160,
-    );
+    const pageRect = wrapperEl.getBoundingClientRect();
+    const containerRect = scrollContainer.getBoundingClientRect();
+
+    // Skip re-rendering if existing detail tile at the same zoom already covers the visible viewport
+    const existing = detailTileRef.current;
+    const tightCrop = computeVisiblePageCrop(pageRect, containerRect, 0);
+    if (!tightCrop) {
+      detailCanvas.width = 0;
+      detailCanvas.height = 0;
+      setDetailTile(null);
+      return;
+    }
+    if (
+      existing &&
+      Math.abs(existing.zoom - renderZoom) < 0.001 &&
+      existing.x <= tightCrop.x &&
+      existing.y <= tightCrop.y &&
+      existing.x + existing.width >= tightCrop.x + tightCrop.width &&
+      existing.y + existing.height >= tightCrop.y + tightCrop.height
+    ) {
+      return;
+    }
+
+    const crop = computeVisiblePageCrop(pageRect, containerRect, 200);
     if (!crop) {
       detailCanvas.width = 0;
       detailCanvas.height = 0;
@@ -382,8 +404,9 @@ function PdfPageItem({
                 top: `${detailTile.y * tileRatio}px`,
                 width: `${detailTile.width * tileRatio}px`,
                 height: `${detailTile.height * tileRatio}px`,
+                opacity: 1,
               }
-            : { display: "none" }
+            : { left: 0, top: 0, width: 0, height: 0, opacity: 0 }
         }
         className="pointer-events-none absolute block"
       />
@@ -403,7 +426,7 @@ function PdfPageItem({
       )}
     </div>
   );
-}
+});
 
 interface ZoomAnchor {
   cursorX: number;
@@ -746,7 +769,7 @@ export function PdfViewer({
       settleTimer = window.setTimeout(() => {
         settleTimer = null;
         setViewportEpoch((e) => e + 1);
-      }, 100);
+      }, 240);
     };
 
     const onScroll = () => {
@@ -977,6 +1000,7 @@ export function PdfViewer({
 
       <div
         ref={containerRef}
+        style={{ overflowAnchor: "none" }}
         onMouseDown={(e) => e.preventDefault()}
         onPointerDown={handleViewportPointerDown}
         onPointerMove={handleViewportPointerMove}
