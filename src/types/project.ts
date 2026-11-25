@@ -2,6 +2,46 @@ export type DimensionUnit = "mm" | "in" | "deg";
 
 export type ActiveModule = "project" | "drawing";
 
+export type AnnotationKind = "linear" | "gdt" | "note" | "datum" | "point";
+
+export type GdtSymbol =
+  | "flatness"
+  | "straightness"
+  | "circularity"
+  | "cylindricity"
+  | "profile_line"
+  | "profile_surface"
+  | "perpendicularity"
+  | "angularity"
+  | "parallelism"
+  | "position"
+  | "concentricity"
+  | "symmetry"
+  | "circular_runout"
+  | "total_runout";
+
+export type MaterialCondition = "" | "MMC" | "LMC" | "RFS";
+
+export interface GdtDatumRef {
+  datum: string;
+  materialCondition: MaterialCondition;
+}
+
+export interface GdtSpec {
+  symbol: GdtSymbol;
+  diameterZone: boolean;
+  tolerance: string;
+  materialCondition: MaterialCondition;
+  datums: GdtDatumRef[];
+}
+
+export interface PointSpec {
+  x: string;
+  y: string;
+  z: string;
+  datums: string[];
+}
+
 export interface MarkerPosition {
   drawingId: string;
   page: number;
@@ -14,6 +54,7 @@ export interface MarkerPosition {
 export interface Dimension {
   id: string;
   drawingId: string | null;
+  kind?: AnnotationKind;
   balloonNumber: number;
   dimensionType: string;
   name: string;
@@ -23,6 +64,8 @@ export interface Dimension {
   lowerTol: string;
   unit: DimensionUnit;
   notes: string;
+  gdt?: GdtSpec | null;
+  point?: PointSpec | null;
   marker: MarkerPosition | null;
 }
 

@@ -23,6 +23,47 @@ fn default_quantity() -> u32 {
     1
 }
 
+fn default_annotation_kind() -> String {
+    "linear".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GdtDatumRef {
+    #[serde(default)]
+    pub datum: String,
+    #[serde(default)]
+    pub material_condition: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GdtSpec {
+    #[serde(default)]
+    pub symbol: String,
+    #[serde(default)]
+    pub diameter_zone: bool,
+    #[serde(default)]
+    pub tolerance: String,
+    #[serde(default)]
+    pub material_condition: String,
+    #[serde(default)]
+    pub datums: Vec<GdtDatumRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PointSpec {
+    #[serde(default)]
+    pub x: String,
+    #[serde(default)]
+    pub y: String,
+    #[serde(default)]
+    pub z: String,
+    #[serde(default)]
+    pub datums: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct MarkerPosition {
@@ -42,6 +83,8 @@ pub struct Dimension {
     pub id: String,
     #[serde(default)]
     pub drawing_id: Option<String>,
+    #[serde(default = "default_annotation_kind")]
+    pub kind: String,
     #[serde(default)]
     pub balloon_number: u32,
     #[serde(default)]
@@ -54,6 +97,10 @@ pub struct Dimension {
     pub lower_tol: String,
     pub unit: String,
     pub notes: String,
+    #[serde(default)]
+    pub gdt: Option<GdtSpec>,
+    #[serde(default)]
+    pub point: Option<PointSpec>,
     pub marker: Option<MarkerPosition>,
 }
 
@@ -444,6 +491,7 @@ mod tests {
                 Dimension {
                     id: "dim-1".to_string(),
                     drawing_id: Some("drw-1".to_string()),
+                    kind: "linear".to_string(),
                     balloon_number: 1,
                     dimension_type: "CTF".to_string(),
                     name: "103".to_string(),
@@ -453,6 +501,8 @@ mod tests {
                     lower_tol: "-0.05".to_string(),
                     unit: "mm".to_string(),
                     notes: "Critical mating surface".to_string(),
+                    gdt: None,
+                    point: None,
                     marker: Some(MarkerPosition {
                         drawing_id: "drw-1".to_string(),
                         page: 1,
@@ -465,15 +515,33 @@ mod tests {
                 Dimension {
                     id: "dim-2".to_string(),
                     drawing_id: Some("drw-2".to_string()),
+                    kind: "gdt".to_string(),
                     balloon_number: 1,
-                    dimension_type: String::new(),
+                    dimension_type: "CTQ".to_string(),
                     name: "101".to_string(),
                     quantity: 1,
-                    nominal: "4.20".to_string(),
-                    upper_tol: "+0.02".to_string(),
-                    lower_tol: "-0.00".to_string(),
+                    nominal: String::new(),
+                    upper_tol: String::new(),
+                    lower_tol: String::new(),
                     unit: "mm".to_string(),
-                    notes: String::new(),
+                    notes: "True position".to_string(),
+                    gdt: Some(GdtSpec {
+                        symbol: "position".to_string(),
+                        diameter_zone: true,
+                        tolerance: "0.05".to_string(),
+                        material_condition: "MMC".to_string(),
+                        datums: vec![
+                            GdtDatumRef {
+                                datum: "A".to_string(),
+                                material_condition: String::new(),
+                            },
+                            GdtDatumRef {
+                                datum: "B".to_string(),
+                                material_condition: "MMC".to_string(),
+                            },
+                        ],
+                    }),
+                    point: None,
                     marker: None,
                 },
             ],

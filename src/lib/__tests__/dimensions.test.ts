@@ -8,6 +8,12 @@ import {
   rememberDimensionType,
   validateDimensionId,
 } from "../dimensions";
+import {
+  createDefaultGdtSpec,
+  createDefaultPointSpec,
+  getAvailableDatums,
+  getGdtSymbolGlyph,
+} from "../annotations";
 import type { Dimension } from "../../types/project";
 
 describe("dimensions", () => {
@@ -144,5 +150,26 @@ describe("dimensions", () => {
     expect(validateDimensionId("512A", "uuid-2", existing)).toBeNull();
     // Brand new unique ID is valid
     expect(validateDimensionId("104", "uuid-new", existing)).toBeNull();
+  });
+
+  it("extracts available Datum names and scopes ID uniqueness per annotation kind", () => {
+    const dims: Dimension[] = [
+      { ...createDimension([], "d-1"), id: "d1", kind: "datum", name: "A" },
+      { ...createDimension([], "d-1"), id: "d2", kind: "datum", name: "B" },
+      { ...createDimension([], "d-1"), id: "d3", kind: "linear", name: "1" },
+      { ...createDimension([], "d-1"), id: "d4", kind: "note", name: "1" },
+    ];
+
+    expect(getAvailableDatums(dims)).toEqual(["A", "B"]);
+    expect(validateDimensionId("1", "new-note", dims, "note")).toContain(
+      "already exists",
+    );
+    expect(validateDimensionId("1", "new-point", dims, "point")).toBeNull();
+    expect(validateDimensionId("", "new-datum", dims, "datum")).toBe(
+      "Datum name is required.",
+    );
+    expect(getGdtSymbolGlyph("position")).toBe("⌖");
+    expect(createDefaultGdtSpec().datums).toHaveLength(3);
+    expect(createDefaultPointSpec().datums).toHaveLength(3);
   });
 });

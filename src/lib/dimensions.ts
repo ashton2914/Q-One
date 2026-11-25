@@ -1,4 +1,5 @@
-import type { Dimension, ProjectData } from "../types/project";
+import type { AnnotationKind, Dimension, ProjectData } from "../types/project";
+import { getAnnotationKind } from "./annotations";
 
 export const CURRENT_SCHEMA_VERSION = 1;
 
@@ -26,6 +27,7 @@ export function createDimension(
   return {
     id: generateId(),
     drawingId,
+    kind: "linear",
     balloonNumber: nextBalloonNumber(existing),
     dimensionType: "",
     name: "",
@@ -35,6 +37,8 @@ export function createDimension(
     lowerTol: "",
     unit: "mm",
     notes: "",
+    gdt: null,
+    point: null,
     marker: null,
   };
 }
@@ -67,21 +71,37 @@ export function findTypeCompletion(
   return null;
 }
 
+const KIND_ID_LABEL: Record<AnnotationKind, string> = {
+  linear: "Dimension ID",
+  gdt: "GD&T ID",
+  note: "Note #",
+  datum: "Datum name",
+  point: "Point #",
+};
+
 export function validateDimensionId(
   idText: string,
   editingInternalId: string,
   dimensions: readonly Dimension[],
+  kind?: AnnotationKind,
 ): string | null {
+  const editing = dimensions.find((d) => d.id === editingInternalId);
+  const resolvedKind: AnnotationKind =
+    kind ?? (editing ? getAnnotationKind(editing) : "linear");
+  const label = KIND_ID_LABEL[resolvedKind];
   const trimmed = idText.trim();
   if (!trimmed) {
-    return "Dimension ID is required.";
+    return `${label} is required.`;
   }
   const lower = trimmed.toLowerCase();
   const duplicate = dimensions.find(
-    (d) => d.id !== editingInternalId && d.name.trim().toLowerCase() === lower,
+    (d) =>
+      d.id !== editingInternalId &&
+      getAnnotationKind(d) === resolvedKind &&
+      d.name.trim().toLowerCase() === lower,
   );
   if (duplicate) {
-    return `Dimension ID "${trimmed}" already exists.`;
+    return `${label} "${trimmed}" already exists.`;
   }
   return null;
 }
