@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import {
   ChevronRight,
   FilePlus2,
@@ -14,6 +15,7 @@ export interface DrawingListSidebarProps {
   dimCountByDrawing: Map<string, number>;
   onUploadPdf: () => void;
   onSelectDrawing: (drawingId: string) => void;
+  onUpdateDrawingVersion: (drawingId: string, version: string) => void;
   onRemoveDrawing: (drawingId: string) => void;
   onGoToProject: () => void;
 }
@@ -25,9 +27,26 @@ export function DrawingListSidebar({
   dimCountByDrawing,
   onUploadPdf,
   onSelectDrawing,
+  onUpdateDrawingVersion,
   onRemoveDrawing,
   onGoToProject,
 }: DrawingListSidebarProps) {
+  const prevCountRef = useRef<number>(drawings.length);
+  const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
+
+  // Auto-focus the version input of a newly uploaded drawing
+  useEffect(() => {
+    if (drawings.length > prevCountRef.current && drawings.length > 0) {
+      const newest = drawings[drawings.length - 1];
+      const input = inputRefs.current.get(newest.id);
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    }
+    prevCountRef.current = drawings.length;
+  }, [drawings]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="border-b border-neutral-800 px-3 py-2.5">
@@ -89,7 +108,7 @@ export function DrawingListSidebar({
               </div>
             ) : (
               <ul className="space-y-1.5">
-                {drawings.map((drw, index) => {
+                {drawings.map((drw) => {
                   const isCurrent = drw.id === activeDrawingId;
                   const dimCount = dimCountByDrawing.get(drw.id) ?? 0;
                   return (
@@ -97,8 +116,10 @@ export function DrawingListSidebar({
                       <div
                         role="button"
                         tabIndex={0}
+                        title={drw.filename}
                         onClick={() => onSelectDrawing(drw.id)}
                         onKeyDown={(e) => {
+                          if (e.target !== e.currentTarget) return;
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
                             onSelectDrawing(drw.id);
@@ -119,17 +140,33 @@ export function DrawingListSidebar({
                                   : "text-neutral-400"
                               }`}
                             />
-                            <span
-                              title={drw.filename}
-                              className="truncate font-mono text-xs font-medium text-neutral-100"
-                            >
-                              {drw.filename}
-                            </span>
+                            <input
+                              ref={(el) => {
+                                if (el) {
+                                  inputRefs.current.set(drw.id, el);
+                                } else {
+                                  inputRefs.current.delete(drw.id);
+                                }
+                              }}
+                              type="text"
+                              aria-label="Drawing version"
+                              value={drw.version ?? ""}
+                              placeholder="Enter version (e.g. Rev A)"
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) =>
+                                onUpdateDrawingVersion(drw.id, e.target.value)
+                              }
+                              onKeyDown={(e) => {
+                                if (e.nativeEvent.isComposing) return;
+                                if (e.key === "Enter" || e.key === "Escape") {
+                                  e.preventDefault();
+                                  e.currentTarget.blur();
+                                }
+                              }}
+                              className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 font-mono text-xs font-semibold text-neutral-100 placeholder:font-sans placeholder:font-normal placeholder:text-neutral-500 hover:border-neutral-700 focus:border-neutral-500 focus:bg-neutral-950 focus:outline-none"
+                            />
                           </div>
-                          <div className="mt-1 flex items-center gap-2 font-mono text-[10px] text-neutral-400">
-                            <span className="rounded bg-neutral-800 px-1 py-[1px] text-neutral-300">
-                              V{index + 1}
-                            </span>
+                          <div className="mt-1 flex items-center gap-1.5 pl-5 font-mono text-[10px] text-neutral-400">
                             <span>{drw.pageCount}p</span>
                             <span>·</span>
                             <span>

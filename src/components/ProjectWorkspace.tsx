@@ -1163,7 +1163,9 @@ export function ProjectWorkspace({
                                 className="inline-flex max-w-[110px] items-center gap-1 rounded bg-neutral-800/90 px-1.5 py-0.5 text-[10px] text-neutral-200 ring-1 ring-neutral-700 hover:bg-blue-600/30 hover:text-white hover:ring-blue-500/60"
                               >
                                 <FileText className="h-2.5 w-2.5 shrink-0 text-emerald-400" />
-                                <span className="truncate">{drw.filename}</span>
+                                <span className="truncate">
+                                  {drw.version?.trim() || drw.filename}
+                                </span>
                               </button>
                             ))}
                             {attachedDrawings.length > 2 && (

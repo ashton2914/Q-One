@@ -38,6 +38,7 @@ export interface Part {
 
 export interface DrawingEntry {
   id: string;
+  version?: string;
   filename: string;
   archivePath: string;
   pageCount: number;

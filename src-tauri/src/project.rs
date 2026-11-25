@@ -77,6 +77,8 @@ pub struct Part {
 #[serde(rename_all = "camelCase")]
 pub struct DrawingEntry {
     pub id: String,
+    #[serde(default)]
+    pub version: String,
     pub filename: String,
     pub archive_path: String,
     pub page_count: u32,
@@ -421,12 +423,14 @@ mod tests {
             drawings: vec![
                 DrawingEntry {
                     id: "drw-1".to_string(),
+                    version: "Rev B".to_string(),
                     filename: "c_cover_asm.pdf".to_string(),
                     archive_path: "drawings/drw-1.pdf".to_string(),
                     page_count: 10,
                 },
                 DrawingEntry {
                     id: "drw-2".to_string(),
+                    version: "Rev A".to_string(),
                     filename: "metal_c_cover.pdf".to_string(),
                     archive_path: "drawings/drw-2.pdf".to_string(),
                     page_count: 4,

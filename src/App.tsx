@@ -148,9 +148,10 @@ export default function App() {
     }
     return project.drawings.map((drw) => {
       const part = partByDrawingId.get(drw.id);
+      const drwTitle = drw.version?.trim() || drw.filename;
       const label = part
-        ? `${part.name.trim() || "Untitled Part"} / ${drw.filename}`
-        : drw.filename;
+        ? `${part.name.trim() || "Untitled Part"} / ${drwTitle}`
+        : drwTitle;
       return { id: drw.id, label };
     });
   }, [project]);
@@ -505,6 +506,7 @@ export default function App() {
         const imported = await importPdf(path);
         const newDrawing = {
           id: imported.drawingId,
+          version: "",
           filename: imported.filename,
           archivePath: `drawings/${imported.drawingId}.pdf`,
           pageCount: 1,
@@ -537,6 +539,23 @@ export default function App() {
       }
     },
     [project, activePartId, markDirty, showStatus],
+  );
+
+  const handleUpdateDrawingVersion = useCallback(
+    (drawingId: string, version: string) => {
+      setProject((prev) =>
+        prev
+          ? {
+              ...prev,
+              drawings: prev.drawings.map((d) =>
+                d.id === drawingId ? { ...d, version } : d,
+              ),
+            }
+          : prev,
+      );
+      markDirty();
+    },
+    [markDirty],
   );
 
   const handleDetachPdf = useCallback(
@@ -1093,7 +1112,9 @@ export default function App() {
                   placingDimensionId={placingDimensionId}
                   focusNameKey={focusNameKey}
                   hasProject={activeDrawingId !== null}
-                  activeDrawingFilename={activeDrawing.filename}
+                  activeDrawingFilename={
+                    activeDrawing.version?.trim() || activeDrawing.filename
+                  }
                   onBackToDrawings={() => {
                     if (editingDimensionId) {
                       handleCancelEditing();
@@ -1120,6 +1141,7 @@ export default function App() {
                     if (activePart) void handleAttachPdf(activePart.id);
                   }}
                   onSelectDrawing={(drwId) => void handleOpenDrawing(drwId)}
+                  onUpdateDrawingVersion={handleUpdateDrawingVersion}
                   onRemoveDrawing={(drwId) => {
                     if (activePart) void handleDetachPdf(activePart.id, drwId);
                   }}
