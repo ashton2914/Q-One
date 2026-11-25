@@ -36,6 +36,8 @@ pub struct MarkerPosition {
 pub struct Dimension {
     pub id: String,
     pub balloon_number: u32,
+    #[serde(default)]
+    pub dimension_type: String,
     pub name: String,
     pub nominal: String,
     pub upper_tol: String,
@@ -335,6 +337,7 @@ mod tests {
                 Dimension {
                     id: "dim-1".to_string(),
                     balloon_number: 1,
+                    dimension_type: "CTQ".to_string(),
                     name: "Outer Diameter".to_string(),
                     nominal: "25.00".to_string(),
                     upper_tol: "+0.05".to_string(),
@@ -353,6 +356,7 @@ mod tests {
                 Dimension {
                     id: "dim-2".to_string(),
                     balloon_number: 2,
+                    dimension_type: String::new(),
                     name: "Slot Width".to_string(),
                     nominal: "4.20".to_string(),
                     upper_tol: "+0.02".to_string(),

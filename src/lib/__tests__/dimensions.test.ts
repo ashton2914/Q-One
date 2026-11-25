@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   createDimension,
   createProjectFromPdf,
+  findTypeCompletion,
   formatTolerance,
   nextBalloonNumber,
+  rememberDimensionType,
 } from "../dimensions";
 import type { Dimension } from "../../types/project";
 
@@ -14,6 +16,7 @@ describe("dimensions", () => {
       {
         id: "a",
         balloonNumber: 1,
+        dimensionType: "",
         name: "A",
         nominal: "10.00",
         upperTol: "+0.05",
@@ -25,6 +28,7 @@ describe("dimensions", () => {
       {
         id: "c",
         balloonNumber: 3,
+        dimensionType: "",
         name: "C",
         nominal: "5.00",
         upperTol: "+0.02",
@@ -71,5 +75,19 @@ describe("dimensions", () => {
       },
     ]);
     expect(proj.dimensions).toEqual([]);
+  });
+
+  it("remembers dimension types in MRU order and autocompletes from first letter", () => {
+    let history: string[] = [];
+    history = rememberDimensionType(history, "CTQ");
+    history = rememberDimensionType(history, "FAI");
+    history = rememberDimensionType(history, "ctq");
+    expect(history).toEqual(["CTQ", "FAI"]);
+
+    expect(findTypeCompletion("c", history)).toBe("CTQ");
+    expect(findTypeCompletion("f", history)).toBe("FAI");
+    expect(findTypeCompletion("CTQ", history)).toBe("CTQ");
+    expect(findTypeCompletion("z", history)).toBeNull();
+    expect(findTypeCompletion("", history)).toBeNull();
   });
 });

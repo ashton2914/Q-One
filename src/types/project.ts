@@ -12,6 +12,7 @@ export interface MarkerPosition {
 export interface Dimension {
   id: string;
   balloonNumber: number;
+  dimensionType: string;
   name: string;
   nominal: string;
   upperTol: string;

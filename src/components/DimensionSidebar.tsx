@@ -9,11 +9,12 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { formatTolerance } from "../lib/dimensions";
+import { findTypeCompletion, formatTolerance } from "../lib/dimensions";
 import type { Dimension } from "../types/project";
 
 export interface DimensionSidebarProps {
   dimensions: Dimension[];
+  typeHistory: string[];
   selectedDimensionId: string | null;
   editingDimensionId: string | null;
   placingDimensionId: string | null;
@@ -32,6 +33,7 @@ export interface DimensionSidebarProps {
 
 interface InlineEditCardProps {
   dimension: Dimension;
+  typeHistory: string[];
   isPlacing: boolean;
   focusNameKey: number;
   onUpdate: (id: string, patch: Partial<Dimension>) => void;
@@ -44,6 +46,7 @@ interface InlineEditCardProps {
 
 function InlineEditCard({
   dimension,
+  typeHistory,
   isPlacing,
   focusNameKey,
   onUpdate,
@@ -53,15 +56,45 @@ function InlineEditCard({
   onStartPlacing,
   onClearMarker,
 }: InlineEditCardProps) {
-  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const typeInputRef = useRef<HTMLInputElement | null>(null);
+  const lastTypeInputLenRef = useRef<number>(
+    (dimension.dimensionType ?? "").length,
+  );
 
   useEffect(() => {
-    const input = nameInputRef.current;
+    const input = typeInputRef.current;
     if (!input) return;
     input.focus();
     const len = input.value.length;
     input.setSelectionRange(len, len);
   }, [dimension.id, focusNameKey]);
+
+  const handleTypeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value;
+    const isDeleting = raw.length < lastTypeInputLenRef.current;
+    const inputEvent = e.nativeEvent as InputEvent;
+    const isComposing = Boolean(inputEvent.isComposing);
+
+    if (!isDeleting && !isComposing && raw.length > 0) {
+      const match = findTypeCompletion(raw, typeHistory);
+      if (match && match.length >= raw.length) {
+        lastTypeInputLenRef.current = raw.length;
+        onUpdate(dimension.id, { dimensionType: match });
+        const inputEl = e.target;
+        const start = raw.length;
+        const end = match.length;
+        window.requestAnimationFrame(() => {
+          if (document.activeElement === inputEl) {
+            inputEl.setSelectionRange(start, end);
+          }
+        });
+        return;
+      }
+    }
+
+    lastTypeInputLenRef.current = raw.length;
+    onUpdate(dimension.id, { dimensionType: raw });
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing) return;
@@ -122,18 +155,33 @@ function InlineEditCard({
       </div>
 
       <div className="space-y-2 text-xs">
-        <div>
-          <label className="mb-1 block text-[11px] text-neutral-400">
-            Name
-          </label>
-          <input
-            ref={nameInputRef}
-            type="text"
-            value={dimension.name}
-            placeholder="e.g. 104 / Outer Dia"
-            onChange={(e) => onUpdate(dimension.id, { name: e.target.value })}
-            className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
-          />
+        <div className="grid grid-cols-[92px_1fr] gap-1.5">
+          <div>
+            <label className="mb-1 block text-[11px] text-neutral-400">
+              Type
+            </label>
+            <input
+              ref={typeInputRef}
+              type="text"
+              value={dimension.dimensionType ?? ""}
+              placeholder="e.g. CTQ"
+              onChange={handleTypeChange}
+              className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[11px] text-neutral-400">
+              Name
+            </label>
+            <input
+              type="text"
+              value={dimension.name}
+              placeholder="e.g. 104 / Outer Dia"
+              onChange={(e) => onUpdate(dimension.id, { name: e.target.value })}
+              className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
+            />
+          </div>
         </div>
 
         <div className="grid grid-cols-3 gap-1.5">
@@ -238,6 +286,7 @@ function InlineEditCard({
 
 export function DimensionSidebar({
   dimensions,
+  typeHistory,
   selectedDimensionId,
   editingDimensionId,
   placingDimensionId,
@@ -302,6 +351,7 @@ export function DimensionSidebar({
                       <li key={dim.id}>
                         <InlineEditCard
                           dimension={dim}
+                          typeHistory={typeHistory}
                           isPlacing={isPlacing}
                           focusNameKey={focusNameKey}
                           onUpdate={onUpdateDimension}
@@ -348,8 +398,15 @@ export function DimensionSidebar({
                           </span>
 
                           <div className="min-w-0">
-                            <div className="truncate text-xs font-medium text-neutral-100">
-                              {dim.name.trim() || "Untitled Dimension"}
+                            <div className="flex items-center gap-1.5">
+                              {dim.dimensionType?.trim() && (
+                                <span className="shrink-0 rounded bg-neutral-800 px-1.5 py-[1px] font-mono text-[10px] font-medium text-neutral-300 ring-1 ring-neutral-700/80">
+                                  {dim.dimensionType.trim()}
+                                </span>
+                              )}
+                              <span className="truncate text-xs font-medium text-neutral-100">
+                                {dim.name.trim() || "Untitled Dimension"}
+                              </span>
                             </div>
                             <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-neutral-400">
                               {dim.nominal.trim() ? (
