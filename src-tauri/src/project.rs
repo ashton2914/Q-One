@@ -71,6 +71,8 @@ pub struct Part {
     pub notes: String,
     #[serde(default)]
     pub drawing_ids: Vec<String>,
+    #[serde(default)]
+    pub latest_drawing_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -409,6 +411,7 @@ mod tests {
                     revision: "Rev B".to_string(),
                     notes: String::new(),
                     drawing_ids: vec!["drw-1".to_string()],
+                    latest_drawing_id: Some("drw-1".to_string()),
                 },
                 Part {
                     id: "part-2".to_string(),
@@ -418,6 +421,7 @@ mod tests {
                     revision: "Rev A".to_string(),
                     notes: "CNC machined".to_string(),
                     drawing_ids: vec!["drw-2".to_string()],
+                    latest_drawing_id: None,
                 },
             ],
             drawings: vec![
@@ -504,6 +508,7 @@ mod tests {
                 revision: String::new(),
                 notes: String::new(),
                 drawing_ids: vec![],
+                latest_drawing_id: None,
             }],
             drawings: vec![],
             dimensions: vec![],

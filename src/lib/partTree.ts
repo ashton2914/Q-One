@@ -34,7 +34,25 @@ export function createPart(
     revision: "",
     notes: "",
     drawingIds: [],
+    latestDrawingId: null,
   };
+}
+
+/**
+ * Resolves the "Latest" drawing ID for a Part:
+ * - If the user explicitly marked `part.latestDrawingId` and it still belongs to the part, use it.
+ * - Otherwise, default to the most recently uploaded (last) drawing in `part.drawingIds`.
+ */
+export function resolveLatestDrawingId(part: Part): string | null {
+  if (
+    part.latestDrawingId &&
+    part.drawingIds.includes(part.latestDrawingId)
+  ) {
+    return part.latestDrawingId;
+  }
+  return part.drawingIds.length > 0
+    ? part.drawingIds[part.drawingIds.length - 1]
+    : null;
 }
 
 export function canReparentPart(

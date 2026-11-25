@@ -4,6 +4,7 @@ import {
   FilePlus2,
   FileText,
   Network,
+  Star,
   Trash2,
 } from "lucide-react";
 import type { DrawingEntry, Part } from "../types/project";
@@ -12,10 +13,12 @@ export interface DrawingListSidebarProps {
   activePart: Part | null;
   drawings: DrawingEntry[];
   activeDrawingId: string | null;
+  latestDrawingId: string | null;
   dimCountByDrawing: Map<string, number>;
   onUploadPdf: () => void;
   onSelectDrawing: (drawingId: string) => void;
   onUpdateDrawingVersion: (drawingId: string, version: string) => void;
+  onMarkLatest: (drawingId: string) => void;
   onRemoveDrawing: (drawingId: string) => void;
   onGoToProject: () => void;
 }
@@ -24,10 +27,12 @@ export function DrawingListSidebar({
   activePart,
   drawings,
   activeDrawingId,
+  latestDrawingId,
   dimCountByDrawing,
   onUploadPdf,
   onSelectDrawing,
   onUpdateDrawingVersion,
+  onMarkLatest,
   onRemoveDrawing,
   onGoToProject,
 }: DrawingListSidebarProps) {
@@ -110,6 +115,7 @@ export function DrawingListSidebar({
               <ul className="space-y-1.5">
                 {drawings.map((drw) => {
                   const isCurrent = drw.id === activeDrawingId;
+                  const isLatest = drw.id === latestDrawingId;
                   const dimCount = dimCountByDrawing.get(drw.id) ?? 0;
                   return (
                     <li key={drw.id}>
@@ -175,12 +181,31 @@ export function DrawingListSidebar({
                           >
                             {drw.filename}
                           </div>
-                          <div className="mt-0.5 flex items-center gap-1.5 pl-5 font-mono text-[10px] text-neutral-400">
+                          <div className="mt-1 flex items-center gap-1.5 pl-5 font-mono text-[10px] text-neutral-400">
                             <span>{drw.pageCount}p</span>
                             <span>·</span>
                             <span>
                               {dimCount} {dimCount === 1 ? "dim" : "dims"}
                             </span>
+                            {isLatest ? (
+                              <span className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-amber-500/15 px-1.5 py-[1px] font-sans text-[9px] font-medium text-amber-300 ring-1 ring-amber-500/40">
+                                <Star className="h-2.5 w-2.5 fill-amber-400 text-amber-400" />
+                                Latest
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                title="Mark as Latest drawing version"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onMarkLatest(drw.id);
+                                }}
+                                className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-neutral-800 px-1.5 py-[1px] font-sans text-[9px] font-medium text-neutral-400 opacity-0 ring-1 ring-neutral-700 transition-opacity hover:bg-amber-500/15 hover:text-amber-300 hover:ring-amber-500/40 group-hover:opacity-100 focus:opacity-100"
+                              >
+                                <Star className="h-2.5 w-2.5" />
+                                Set Latest
+                              </button>
+                            )}
                           </div>
                         </div>
 

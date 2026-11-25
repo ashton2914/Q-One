@@ -7,6 +7,7 @@ import {
   layoutPartTree,
   normalizeLoadedProject,
   reparentPart,
+  resolveLatestDrawingId,
 } from "../partTree";
 import type { Part, ProjectData } from "../../types/project";
 
@@ -172,5 +173,19 @@ describe("partTree", () => {
     expect(root.parentId).toBeNull();
     expect(root.name).toBe("Top Cover");
     expect(root.drawingIds).toEqual([]);
+  });
+
+  it("resolves latest drawing to explicit latestDrawingId or falls back to most recently uploaded", () => {
+    const base = createPart(null, "C Cover");
+    expect(resolveLatestDrawingId(base)).toBeNull();
+
+    const twoDrawings: Part = { ...base, drawingIds: ["d-1", "d-2"] };
+    expect(resolveLatestDrawingId(twoDrawings)).toBe("d-2");
+
+    const explicit: Part = { ...twoDrawings, latestDrawingId: "d-1" };
+    expect(resolveLatestDrawingId(explicit)).toBe("d-1");
+
+    const staleExplicit: Part = { ...twoDrawings, latestDrawingId: "d-deleted" };
+    expect(resolveLatestDrawingId(staleExplicit)).toBe("d-2");
   });
 });

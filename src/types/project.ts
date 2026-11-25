@@ -34,6 +34,7 @@ export interface Part {
   revision: string;
   notes: string;
   drawingIds: string[];
+  latestDrawingId?: string | null;
 }
 
 export interface DrawingEntry {

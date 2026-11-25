@@ -20,6 +20,7 @@ import {
   layoutPartTree,
   PART_CARD_HEIGHT,
   PART_CARD_WIDTH,
+  resolveLatestDrawingId,
 } from "../lib/partTree";
 import type { DrawingEntry, Part, ProjectData } from "../types/project";
 
@@ -1011,6 +1012,10 @@ export function ProjectWorkspace({
                     pointerDrag?.kind === "card" &&
                     pointerDrag.active &&
                     pointerDrag.partId === part.id;
+                  const latestDrawingId = resolveLatestDrawingId(part);
+                  const latestDrawing = latestDrawingId
+                    ? drawingsById.get(latestDrawingId) ?? null
+                    : null;
 
                   const leftPortX = node.x;
                   const rightPortX = node.x + PART_CARD_WIDTH;
@@ -1140,46 +1145,15 @@ export function ProjectWorkspace({
                         </div>
                       </div>
 
-                      {/* Middle: attached PDF chips */}
-                      <div className="flex items-center gap-1 overflow-hidden">
-                        {attachedDrawings.length === 0 ? (
-                          <span className="text-[10px] italic text-neutral-500">
-                            No drawing attached
-                          </span>
-                        ) : (
-                          <>
-                            {attachedDrawings.slice(0, 2).map((drw) => (
-                              <button
-                                key={drw.id}
-                                type="button"
-                                title={`Open "${drw.filename}" in Drawing`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onOpenDrawing(drw.id);
-                                }}
-                                className="inline-flex max-w-[110px] items-center gap-1 rounded bg-neutral-800/90 px-1.5 py-0.5 text-[10px] text-neutral-200 ring-1 ring-neutral-700 hover:bg-blue-600/30 hover:text-white hover:ring-blue-500/60"
-                              >
-                                <FileText className="h-2.5 w-2.5 shrink-0 text-emerald-400" />
-                                <span className="truncate">
-                                  {drw.version?.trim()
-                                    ? `Version: ${drw.version.trim()}`
-                                    : drw.filename}
-                                </span>
-                              </button>
-                            ))}
-                            {attachedDrawings.length > 2 && (
-                              <span className="text-[10px] text-neutral-400">
-                                +{attachedDrawings.length - 2}
-                              </span>
-                            )}
-                          </>
-                        )}
+                      {/* Middle: optional notes */}
+                      <div className="truncate text-[10px] text-neutral-500">
+                        {part.notes.trim() || ""}
                       </div>
 
-                      {/* Footer: attached 2D drawing status */}
-                      <div className="flex items-center justify-between border-t border-neutral-800/90 pt-1.5 text-[10px]">
+                      {/* Footer: attached 2D drawing count + latest version */}
+                      <div className="flex items-center justify-between gap-2 border-t border-neutral-800/90 pt-1.5 text-[10px]">
                         <span
-                          className={`inline-flex items-center gap-1 font-mono ${
+                          className={`inline-flex shrink-0 items-center gap-1 font-mono ${
                             attachedDrawings.length > 0
                               ? "text-emerald-400/90"
                               : "text-neutral-500"
@@ -1191,6 +1165,24 @@ export function ProjectWorkspace({
                             ? "2D drawing"
                             : "2D drawings"}
                         </span>
+
+                        {latestDrawing && (
+                          <button
+                            type="button"
+                            title={`Open latest drawing (${latestDrawing.filename})`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onOpenDrawing(latestDrawing.id);
+                            }}
+                            className="inline-flex min-w-0 max-w-[115px] items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-amber-300 ring-1 ring-amber-500/35 hover:bg-amber-500/20"
+                          >
+                            <span className="truncate">
+                              {latestDrawing.version?.trim()
+                                ? `Latest: ${latestDrawing.version.trim()}`
+                                : "Latest"}
+                            </span>
+                          </button>
+                        )}
                       </div>
                     </div>
                   );

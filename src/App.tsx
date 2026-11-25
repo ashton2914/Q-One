@@ -29,6 +29,7 @@ import {
   deletePartSubtree,
   normalizeLoadedProject,
   reparentPart,
+  resolveLatestDrawingId,
 } from "./lib/partTree";
 import {
   clearDrawings,
@@ -129,6 +130,11 @@ export default function App() {
       .map((id) => byId.get(id))
       .filter((d): d is DrawingEntry => Boolean(d));
   }, [project, activePart]);
+
+  const activePartLatestDrawingId = useMemo(
+    () => (activePart ? resolveLatestDrawingId(activePart) : null),
+    [activePart],
+  );
 
   const dimCountByDrawing = useMemo(() => {
     const map = new Map<string, number>();
@@ -578,6 +584,23 @@ export default function App() {
     [markDirty],
   );
 
+  const handleMarkLatestDrawing = useCallback(
+    (partId: string, drawingId: string) => {
+      setProject((prev) =>
+        prev
+          ? {
+              ...prev,
+              parts: prev.parts.map((p) =>
+                p.id === partId ? { ...p, latestDrawingId: drawingId } : p,
+              ),
+            }
+          : prev,
+      );
+      markDirty();
+    },
+    [markDirty],
+  );
+
   const handleDetachPdf = useCallback(
     async (partId: string, drawingId: string) => {
       if (!project) return;
@@ -609,7 +632,12 @@ export default function App() {
           ...prev,
           parts: prev.parts.map((p) =>
             p.id === partId
-              ? { ...p, drawingIds: p.drawingIds.filter((id) => id !== drawingId) }
+              ? {
+                  ...p,
+                  drawingIds: p.drawingIds.filter((id) => id !== drawingId),
+                  latestDrawingId:
+                    p.latestDrawingId === drawingId ? null : p.latestDrawingId,
+                }
               : p,
           ),
           drawings: prev.drawings.filter((d) => d.id !== drawingId),
@@ -710,10 +738,12 @@ export default function App() {
         return;
       }
 
+      const preferredLatestId =
+        resolveLatestDrawingId(part) ?? part.drawingIds[0];
       const targetDrawingId =
         activeDrawingId && part.drawingIds.includes(activeDrawingId)
           ? activeDrawingId
-          : part.drawingIds[0];
+          : preferredLatestId;
 
       if (targetDrawingId !== activeDrawingId || !pdfBytes) {
         const seq = ++drawingLoadSeqRef.current;
@@ -1186,12 +1216,16 @@ export default function App() {
                   activePart={activePart}
                   drawings={activePartDrawings}
                   activeDrawingId={activeDrawingId}
+                  latestDrawingId={activePartLatestDrawingId}
                   dimCountByDrawing={dimCountByDrawing}
                   onUploadPdf={() => {
                     if (activePart) void handleAttachPdf(activePart.id);
                   }}
                   onSelectDrawing={(drwId) => void handleOpenDrawing(drwId)}
                   onUpdateDrawingVersion={handleUpdateDrawingVersion}
+                  onMarkLatest={(drwId) => {
+                    if (activePart) handleMarkLatestDrawing(activePart.id, drwId);
+                  }}
                   onRemoveDrawing={(drwId) => {
                     if (activePart) void handleDetachPdf(activePart.id, drwId);
                   }}
