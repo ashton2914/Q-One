@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import { FilePlus2, FolderOpen } from "lucide-react";
-import { DimensionEditor } from "./components/DimensionEditor";
 import { DimensionSidebar } from "./components/DimensionSidebar";
 import { MenuBar } from "./components/MenuBar";
 import { PdfViewer, type ScrollToPageRequest } from "./components/PdfViewer";
@@ -36,6 +35,9 @@ export default function App() {
   const [scrollToPageRequest, setScrollToPageRequest] =
     useState<ScrollToPageRequest | null>(null);
   const [selectedDimensionId, setSelectedDimensionId] = useState<string | null>(
+    null,
+  );
+  const [editingDimensionId, setEditingDimensionId] = useState<string | null>(
     null,
   );
   const [placingDimensionId, setPlacingDimensionId] = useState<string | null>(
@@ -90,6 +92,7 @@ export default function App() {
       setPdfBytes(imported.pdfBytes);
       setCurrentPage(1);
       setSelectedDimensionId(null);
+      setEditingDimensionId(null);
       setPlacingDimensionId(null);
       setIsDirty(true);
       setFitRequestKey((k) => k + 1);
@@ -113,6 +116,7 @@ export default function App() {
       setPdfBytes(opened.pdfBytes);
       setCurrentPage(1);
       setSelectedDimensionId(opened.project.dimensions[0]?.id ?? null);
+      setEditingDimensionId(null);
       setPlacingDimensionId(null);
       setIsDirty(false);
       setFitRequestKey((k) => k + 1);
@@ -247,12 +251,23 @@ export default function App() {
     const nextDim = createDimension(project.dimensions);
     setProject({
       ...project,
-      dimensions: [...project.dimensions, nextDim],
+      dimensions: [nextDim, ...project.dimensions],
     });
     setSelectedDimensionId(nextDim.id);
+    setEditingDimensionId(nextDim.id);
     setPlacingDimensionId(nextDim.id);
     markDirty();
   }, [project, markDirty]);
+
+  const handleStartEditing = useCallback((id: string) => {
+    setSelectedDimensionId(id);
+    setEditingDimensionId(id);
+  }, []);
+
+  const handleFinishEditing = useCallback(() => {
+    setEditingDimensionId(null);
+    setPlacingDimensionId(null);
+  }, []);
 
   const handleSelectDimension = useCallback(
     (id: string) => {
@@ -292,6 +307,7 @@ export default function App() {
         };
       });
       setSelectedDimensionId((prev) => (prev === id ? null : prev));
+      setEditingDimensionId((prev) => (prev === id ? null : prev));
       setPlacingDimensionId((prev) => (prev === id ? null : prev));
       markDirty();
     },
@@ -350,9 +366,6 @@ export default function App() {
     [markDirty],
   );
 
-  const selectedDimension =
-    project?.dimensions.find((d) => d.id === selectedDimensionId) ?? null;
-
   return (
     <div className="flex h-full flex-col bg-neutral-950 text-neutral-100">
       <MenuBar
@@ -390,19 +403,15 @@ export default function App() {
           <DimensionSidebar
             dimensions={project?.dimensions ?? []}
             selectedDimensionId={selectedDimensionId}
+            editingDimensionId={editingDimensionId}
             placingDimensionId={placingDimensionId}
             hasProject={project !== null}
             onAddDimension={handleAddDimension}
             onSelectDimension={handleSelectDimension}
+            onStartEditing={handleStartEditing}
+            onFinishEditing={handleFinishEditing}
+            onUpdateDimension={handleUpdateDimension}
             onDeleteDimension={handleDeleteDimension}
-          />
-          <DimensionEditor
-            dimension={selectedDimension}
-            isPlacing={
-              selectedDimension !== null &&
-              placingDimensionId === selectedDimension.id
-            }
-            onUpdate={handleUpdateDimension}
             onStartPlacing={setPlacingDimensionId}
             onClearMarker={handleClearMarker}
           />
