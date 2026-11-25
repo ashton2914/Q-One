@@ -1050,7 +1050,22 @@ export default function App() {
         if (!prev) return prev;
         return {
           ...prev,
-          dimensions: prev.dimensions.filter((d) => d.id !== id),
+          dimensions: prev.dimensions
+            .filter((d) => d.id !== id)
+            .map((d) => {
+              const hasPoint = d.linkedPointIds?.includes(id) ?? false;
+              const hasNote = d.linkedNoteIds?.includes(id) ?? false;
+              if (!hasPoint && !hasNote) return d;
+              return {
+                ...d,
+                linkedPointIds: hasPoint
+                  ? d.linkedPointIds!.filter((pid) => pid !== id)
+                  : d.linkedPointIds,
+                linkedNoteIds: hasNote
+                  ? d.linkedNoteIds!.filter((nid) => nid !== id)
+                  : d.linkedNoteIds,
+              };
+            }),
         };
       });
       setSelectedDimensionId((prev) => (prev === id ? null : prev));

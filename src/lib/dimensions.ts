@@ -39,6 +39,8 @@ export function createDimension(
     notes: "",
     gdt: null,
     point: null,
+    linkedPointIds: [],
+    linkedNoteIds: [],
     marker: null,
   };
 }
@@ -115,6 +117,8 @@ export function duplicateDimension(
           datums: [...source.point.datums],
         }
       : null,
+    linkedPointIds: [...(source.linkedPointIds ?? [])],
+    linkedNoteIds: [...(source.linkedNoteIds ?? [])],
     marker: null,
   };
 }

@@ -217,6 +217,8 @@ describe("dimensions", () => {
       kind: "point",
       name: "P1",
       point: { x: "10", y: "20", z: "0", datums: ["A", "B", ""] },
+      linkedPointIds: ["pt-a"],
+      linkedNoteIds: ["note-1"],
       marker: { drawingId: "d-1", page: 1, x: 0.5, y: 0.5, width: 0, height: 0 },
     };
     const dup = duplicateDimension(p1, [p1]);
@@ -225,6 +227,10 @@ describe("dimensions", () => {
     expect(dup.marker).toBeNull();
     expect(dup.point).toEqual(p1.point);
     expect(dup.point).not.toBe(p1.point);
+    expect(dup.linkedPointIds).toEqual(["pt-a"]);
+    expect(dup.linkedPointIds).not.toBe(p1.linkedPointIds);
+    expect(dup.linkedNoteIds).toEqual(["note-1"]);
+    expect(dup.linkedNoteIds).not.toBe(p1.linkedNoteIds);
 
     const datumA: Dimension = {
       ...createDimension([], "d-1"),

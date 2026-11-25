@@ -93,6 +93,11 @@ export function BalloonOverlay({
     ? getAnnotationKind(placingDimension) === "point"
     : false;
 
+  const selectedDimension = selectedDimensionId
+    ? dimensions.find((d) => d.id === selectedDimensionId) ?? null
+    : null;
+  const linkedPointIdSet = new Set(selectedDimension?.linkedPointIds ?? []);
+
   // Drag-to-box region drawing when placingDimensionId is active
   const handleOverlayPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!placingDimensionId || e.button !== 0 || !overlayRef.current) return;
@@ -371,6 +376,7 @@ export function BalloonOverlay({
               .join(" — ");
 
         if (isPoint) {
+          const isLinkedToSelected = linkedPointIdSet.has(dim.id);
           const placeLabelBelow = py < 18;
           return (
             <div
@@ -388,7 +394,7 @@ export function BalloonOverlay({
                 top: `${py}px`,
               }}
               className={`absolute -translate-x-1/2 -translate-y-1/2 ${
-                isSelected ? "z-30" : "z-20"
+                isSelected || isLinkedToSelected ? "z-30" : "z-20"
               } ${
                 placingDimensionId
                   ? "pointer-events-none opacity-65"
@@ -404,12 +410,16 @@ export function BalloonOverlay({
                 className={`flex h-4 w-4 items-center justify-center rounded-full border-[1.5px] transition-colors ${
                   isSelected
                     ? "border-blue-400 bg-blue-500/25 shadow-[0_0_0_2px_rgba(59,130,246,0.3)]"
-                    : "border-purple-400 bg-purple-500/20 hover:border-purple-300"
+                    : isLinkedToSelected
+                      ? "border-blue-300 bg-blue-500/25 shadow-[0_0_0_3px_rgba(59,130,246,0.28)]"
+                      : "border-purple-400 bg-purple-500/20 hover:border-purple-300"
                 }`}
               >
                 <span
                   className={`h-1.5 w-1.5 rounded-full ${
-                    isSelected ? "bg-blue-400" : "bg-purple-400"
+                    isSelected || isLinkedToSelected
+                      ? "bg-blue-400"
+                      : "bg-purple-400"
                   }`}
                 />
               </div>
@@ -418,7 +428,7 @@ export function BalloonOverlay({
                 className={`pointer-events-none absolute left-1/2 -translate-x-1/2 whitespace-nowrap rounded-[2px] px-1 py-[1px] font-mono text-[10px] font-semibold leading-tight shadow-sm ${
                   placeLabelBelow ? "top-full mt-[2px]" : "bottom-full mb-[2px]"
                 } ${
-                  isSelected
+                  isSelected || isLinkedToSelected
                     ? "bg-blue-600/95 text-white"
                     : "bg-purple-600/90 text-white"
                 }`}

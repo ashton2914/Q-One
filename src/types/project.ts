@@ -66,6 +66,8 @@ export interface Dimension {
   notes: string;
   gdt?: GdtSpec | null;
   point?: PointSpec | null;
+  linkedPointIds?: string[];
+  linkedNoteIds?: string[];
   marker: MarkerPosition | null;
 }
 

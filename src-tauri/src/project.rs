@@ -101,6 +101,10 @@ pub struct Dimension {
     pub gdt: Option<GdtSpec>,
     #[serde(default)]
     pub point: Option<PointSpec>,
+    #[serde(default)]
+    pub linked_point_ids: Vec<String>,
+    #[serde(default)]
+    pub linked_note_ids: Vec<String>,
     pub marker: Option<MarkerPosition>,
 }
 
@@ -503,6 +507,8 @@ mod tests {
                     notes: "Critical mating surface".to_string(),
                     gdt: None,
                     point: None,
+                    linked_point_ids: vec![],
+                    linked_note_ids: vec![],
                     marker: Some(MarkerPosition {
                         drawing_id: "drw-1".to_string(),
                         page: 1,
@@ -542,6 +548,8 @@ mod tests {
                         ],
                     }),
                     point: None,
+                    linked_point_ids: vec!["pt-1".to_string()],
+                    linked_note_ids: vec!["note-1".to_string()],
                     marker: None,
                 },
             ],

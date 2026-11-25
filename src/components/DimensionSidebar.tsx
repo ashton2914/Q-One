@@ -167,9 +167,33 @@ function InlineEditCard({
 
   const kind = getAnnotationKind(dimension);
   const availableDatums = getAvailableDatums(allDimensions);
+  const availablePoints = allDimensions.filter(
+    (d) => getAnnotationKind(d) === "point" && d.name.trim().length > 0,
+  );
+  const availableNotes = allDimensions.filter(
+    (d) => getAnnotationKind(d) === "note" && d.name.trim().length > 0,
+  );
+  const linkedPointIds = dimension.linkedPointIds ?? [];
+  const linkedNoteIds = dimension.linkedNoteIds ?? [];
   const gdt = normalizeGdtSpec(dimension.gdt);
   const gdtRules = getGdtRules(gdt.symbol);
   const point = normalizePointSpec(dimension.point);
+
+  const toggleLinkedPoint = (pointId: string) => {
+    const exists = linkedPointIds.includes(pointId);
+    const next = exists
+      ? linkedPointIds.filter((id) => id !== pointId)
+      : [...linkedPointIds, pointId];
+    onUpdate(dimension.id, { linkedPointIds: next });
+  };
+
+  const toggleLinkedNote = (noteId: string) => {
+    const exists = linkedNoteIds.includes(noteId);
+    const next = exists
+      ? linkedNoteIds.filter((id) => id !== noteId)
+      : [...linkedNoteIds, noteId];
+    onUpdate(dimension.id, { linkedNoteIds: next });
+  };
 
   useEffect(() => {
     setQtyText(
@@ -712,6 +736,97 @@ function InlineEditCard({
           </>
         )}
 
+        {/* LINKED POINTS & NOTES (shared by Linear and GD&T dimensions) */}
+        {(kind === "linear" || kind === "gdt") && (
+          <div className="space-y-2 border-t border-neutral-800/90 pt-2">
+            <div>
+              <div className="mb-1 flex items-center justify-between">
+                <label className="text-[11px] text-neutral-400">
+                  Linked Points
+                </label>
+                {linkedPointIds.length > 0 && (
+                  <span className="font-mono text-[10px] text-purple-300">
+                    {linkedPointIds.length} selected
+                  </span>
+                )}
+              </div>
+              {availablePoints.length === 0 ? (
+                <div className="text-[10px] italic text-neutral-500">
+                  No Point annotations on this drawing yet
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-1">
+                  {availablePoints.map((pt) => {
+                    const selected = linkedPointIds.includes(pt.id);
+                    const ptTip = pt.point
+                      ? `${pt.name} (${pt.point.x || "—"}, ${pt.point.y || "—"}, ${pt.point.z || "—"})${pt.notes ? ` — ${pt.notes}` : ""}`
+                      : pt.name;
+                    return (
+                      <button
+                        key={pt.id}
+                        type="button"
+                        tabIndex={-1}
+                        title={ptTip}
+                        onClick={() => toggleLinkedPoint(pt.id)}
+                        className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-medium transition-colors ${
+                          selected
+                            ? "bg-purple-500/20 text-purple-200 ring-1 ring-purple-400/70"
+                            : "bg-neutral-950 text-neutral-400 ring-1 ring-neutral-800 hover:text-neutral-200 hover:ring-neutral-600"
+                        }`}
+                      >
+                        {pt.name.trim()}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <div className="mb-1 flex items-center justify-between">
+                <label className="text-[11px] text-neutral-400">
+                  Linked Notes
+                </label>
+                {linkedNoteIds.length > 0 && (
+                  <span className="font-mono text-[10px] text-sky-300">
+                    {linkedNoteIds.length} selected
+                  </span>
+                )}
+              </div>
+              {availableNotes.length === 0 ? (
+                <div className="text-[10px] italic text-neutral-500">
+                  No Note annotations on this drawing yet
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-1">
+                  {availableNotes.map((nt) => {
+                    const selected = linkedNoteIds.includes(nt.id);
+                    const ntTip = nt.notes.trim()
+                      ? `${nt.name}: ${nt.notes.trim()}`
+                      : nt.name;
+                    return (
+                      <button
+                        key={nt.id}
+                        type="button"
+                        tabIndex={-1}
+                        title={ntTip}
+                        onClick={() => toggleLinkedNote(nt.id)}
+                        className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-medium transition-colors ${
+                          selected
+                            ? "bg-sky-500/20 text-sky-200 ring-1 ring-sky-400/70"
+                            : "bg-neutral-950 text-neutral-400 ring-1 ring-neutral-800 hover:text-neutral-200 hover:ring-neutral-600"
+                        }`}
+                      >
+                        {nt.name.trim()}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* NOTE fields */}
         {kind === "note" && (
           <>
@@ -961,6 +1076,8 @@ export function DimensionSidebar({
     x: number;
     y: number;
   } | null>(null);
+
+  const dimensionsById = new Map(dimensions.map((d) => [d.id, d]));
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -1253,6 +1370,53 @@ export function DimensionSidebar({
                               {dim.notes.trim()}
                             </div>
                           )}
+
+                          {/* Linked Points & Notes badges (for Linear and GD&T) */}
+                          {(kind === "linear" || kind === "gdt") &&
+                            (() => {
+                              const linkedPts = (dim.linkedPointIds ?? [])
+                                .map((id) => dimensionsById.get(id))
+                                .filter((d): d is Dimension => Boolean(d));
+                              const linkedNts = (dim.linkedNoteIds ?? [])
+                                .map((id) => dimensionsById.get(id))
+                                .filter((d): d is Dimension => Boolean(d));
+                              if (
+                                linkedPts.length === 0 &&
+                                linkedNts.length === 0
+                              ) {
+                                return null;
+                              }
+                              return (
+                                <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                                  {linkedPts.map((pt) => (
+                                    <span
+                                      key={pt.id}
+                                      title={
+                                        pt.point
+                                          ? `Point ${pt.name} (${pt.point.x || "—"}, ${pt.point.y || "—"}, ${pt.point.z || "—"})`
+                                          : `Point ${pt.name}`
+                                      }
+                                      className="rounded bg-purple-500/15 px-1.5 py-[1px] font-mono text-[10px] font-medium text-purple-300 ring-1 ring-purple-500/35"
+                                    >
+                                      {pt.name.trim()}
+                                    </span>
+                                  ))}
+                                  {linkedNts.map((nt) => (
+                                    <span
+                                      key={nt.id}
+                                      title={
+                                        nt.notes.trim()
+                                          ? `Note ${nt.name}: ${nt.notes.trim()}`
+                                          : `Note ${nt.name}`
+                                      }
+                                      className="rounded bg-sky-500/15 px-1.5 py-[1px] font-mono text-[10px] font-medium text-sky-300 ring-1 ring-sky-500/35"
+                                    >
+                                      {nt.name.trim()}
+                                    </span>
+                                  ))}
+                                </div>
+                              );
+                            })()}
                         </div>
 
                         <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
