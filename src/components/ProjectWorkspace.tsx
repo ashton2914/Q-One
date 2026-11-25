@@ -6,7 +6,6 @@ import {
   ExternalLink,
   FilePlus2,
   FileText,
-  GitBranchPlus,
   Maximize2,
   Pencil,
   Plus,
@@ -1015,10 +1014,6 @@ export function ProjectWorkspace({
                     pointerDrag?.kind === "card" &&
                     pointerDrag.active &&
                     pointerDrag.partId === part.id;
-                  const totalDims = part.drawingIds.reduce(
-                    (sum, id) => sum + (dimCountByDrawing.get(id) ?? 0),
-                    0,
-                  );
 
                   const leftPortX = node.x;
                   const rightPortX = node.x + PART_CARD_WIDTH;
@@ -1180,38 +1175,21 @@ export function ProjectWorkspace({
                         )}
                       </div>
 
-                      {/* Footer: dimension count + quick actions */}
+                      {/* Footer: attached 2D drawing status */}
                       <div className="flex items-center justify-between border-t border-neutral-800/90 pt-1.5 text-[10px]">
-                        <span className="font-mono text-neutral-500">
-                          {totalDims} {totalDims === 1 ? "dim" : "dims"}
+                        <span
+                          className={`inline-flex items-center gap-1 font-mono ${
+                            attachedDrawings.length > 0
+                              ? "text-emerald-400/90"
+                              : "text-neutral-500"
+                          }`}
+                        >
+                          <FileText className="h-3 w-3 shrink-0" />
+                          {attachedDrawings.length}{" "}
+                          {attachedDrawings.length === 1
+                            ? "2D drawing"
+                            : "2D drawings"}
                         </span>
-
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            title="Attach PDF drawing"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onAttachPdf(part.id);
-                            }}
-                            className="inline-flex items-center gap-0.5 rounded bg-neutral-800 px-1.5 py-0.5 text-neutral-300 hover:bg-neutral-700 hover:text-white"
-                          >
-                            <FilePlus2 className="h-3 w-3" />
-                            PDF
-                          </button>
-                          <button
-                            type="button"
-                            title="Add sub-part"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onAddPart(part.id);
-                            }}
-                            className="inline-flex items-center gap-0.5 rounded bg-neutral-800 px-1.5 py-0.5 text-neutral-300 hover:bg-neutral-700 hover:text-white"
-                          >
-                            <GitBranchPlus className="h-3 w-3" />
-                            Sub
-                          </button>
-                        </div>
                       </div>
                     </div>
                   );
