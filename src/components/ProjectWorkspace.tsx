@@ -11,6 +11,7 @@ import {
   Maximize2,
   Plus,
   Trash2,
+  Unlink,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -97,6 +98,7 @@ export function ProjectWorkspace({
   const [hoveredTargetId, setHoveredTargetId] = useState<
     string | "__root__" | null
   >(null);
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
 
   const drawingsById = useMemo(
     () => new Map<string, DrawingEntry>(project.drawings.map((d) => [d.id, d])),
@@ -597,7 +599,7 @@ export function ProjectWorkspace({
                   }}
                   className="relative"
                 >
-                  {/* SVG Cubic Bézier Edges + Live Wire Preview */}
+                  {/* SVG Cubic Bézier Edges + Interactive Disconnect + Live Wire Preview */}
                   <svg
                     width={Math.max(layout.width, 720)}
                     height={Math.max(layout.height, 480)}
@@ -605,18 +607,66 @@ export function ProjectWorkspace({
                   >
                     {layout.edges.map((edge) => {
                       const midX = (edge.x1 + edge.x2) / 2;
+                      const midY = (edge.y1 + edge.y2) / 2;
                       const d = `M ${edge.x1} ${edge.y1} C ${midX} ${edge.y1}, ${midX} ${edge.y2}, ${edge.x2} ${edge.y2}`;
+                      const isHovered = hoveredEdgeId === edge.id;
                       const isHighlighted =
                         edge.fromId === selectedPartId ||
                         edge.toId === selectedPartId;
                       return (
-                        <path
+                        <g
                           key={edge.id}
-                          d={d}
-                          fill="none"
-                          stroke={isHighlighted ? "#3b82f6" : "#525252"}
-                          strokeWidth={isHighlighted ? 2 : 1.5}
-                        />
+                          className="pointer-events-auto cursor-pointer"
+                          onMouseEnter={() => setHoveredEdgeId(edge.id)}
+                          onMouseLeave={() =>
+                            setHoveredEdgeId((prev) =>
+                              prev === edge.id ? null : prev,
+                            )
+                          }
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setHoveredEdgeId(null);
+                            onReparentPart(edge.toId, null);
+                          }}
+                        >
+                          <title>Click to disconnect link</title>
+                          {/* Wide invisible hit target for easy hover/click */}
+                          <path
+                            d={d}
+                            fill="none"
+                            stroke="transparent"
+                            strokeWidth={16}
+                          />
+                          <path
+                            d={d}
+                            fill="none"
+                            stroke={
+                              isHovered
+                                ? "#f43f5e"
+                                : isHighlighted
+                                  ? "#3b82f6"
+                                  : "#525252"
+                            }
+                            strokeWidth={isHovered || isHighlighted ? 2.2 : 1.5}
+                          />
+                          {isHovered && (
+                            <g transform={`translate(${midX}, ${midY})`}>
+                              <circle
+                                r={9}
+                                fill="#171717"
+                                stroke="#f43f5e"
+                                strokeWidth={1.5}
+                              />
+                              <path
+                                d="M -3 -3 L 3 3 M 3 -3 L -3 3"
+                                stroke="#fda4af"
+                                strokeWidth={1.6}
+                                strokeLinecap="round"
+                              />
+                            </g>
+                          )}
+                        </g>
                       );
                     })}
 
@@ -890,6 +940,32 @@ export function ProjectWorkspace({
           ) : (
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="flex-1 space-y-3 overflow-y-auto p-3">
+                {selectedPart.parentId && (() => {
+                  const parent = project.parts.find(
+                    (p) => p.id === selectedPart.parentId,
+                  );
+                  if (!parent) return null;
+                  return (
+                    <div className="flex items-center justify-between gap-2 rounded-md border border-neutral-800 bg-neutral-900/80 px-2.5 py-1.5 text-[11px]">
+                      <span className="truncate text-neutral-400">
+                        Parent:{" "}
+                        <span className="font-medium text-neutral-200">
+                          {parent.name.trim() || "Untitled Part"}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        title="Disconnect from parent (make Root Part)"
+                        onClick={() => onReparentPart(selectedPart.id, null)}
+                        className="inline-flex shrink-0 items-center gap-1 rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300 hover:bg-rose-950 hover:text-rose-300"
+                      >
+                        <Unlink className="h-3 w-3" />
+                        Unlink
+                      </button>
+                    </div>
+                  );
+                })()}
+
                 <div>
                   <label className="mb-1 block text-[11px] text-neutral-400">
                     Part Name
