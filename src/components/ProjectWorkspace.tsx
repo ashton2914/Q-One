@@ -10,6 +10,7 @@ import {
   Maximize2,
   Pencil,
   Plus,
+  Power,
   Trash2,
   Unlink,
   ZoomIn,
@@ -26,7 +27,9 @@ import type { DrawingEntry, Part, ProjectData } from "../types/project";
 export interface ProjectWorkspaceProps {
   project: ProjectData;
   selectedPartId: string | null;
+  activePartId: string | null;
   onSelectPart: (partId: string | null) => void;
+  onActivatePart: (partId: string) => void;
   onRenameProject: (name: string) => void;
   onAddPart: (parentId: string | null) => void;
   onUpdatePart: (partId: string, patch: Partial<Part>) => void;
@@ -70,11 +73,13 @@ const EMPTY_COLLAPSED = new Set<string>();
 
 interface InPlacePartEditorProps {
   part: Part;
+  isActive: boolean;
   parentName: string | null;
   attachedDrawings: DrawingEntry[];
   dimCountByDrawing: Map<string, number>;
   x: number;
   y: number;
+  onActivate: () => void;
   onUpdate: (patch: Partial<Part>) => void;
   onDone: () => void;
   onUnlink: () => void;
@@ -86,11 +91,13 @@ interface InPlacePartEditorProps {
 
 function InPlacePartEditor({
   part,
+  isActive,
   parentName,
   attachedDrawings,
   dimCountByDrawing,
   x,
   y,
+  onActivate,
   onUpdate,
   onDone,
   onUnlink,
@@ -141,18 +148,43 @@ function InPlacePartEditor({
           <span className="font-semibold">Edit Part</span>
         </div>
 
-        {parentName && (
+        <div className="flex items-center gap-1.5">
           <button
             type="button"
             tabIndex={-1}
-            title={`Disconnect from "${parentName}"`}
-            onClick={onUnlink}
-            className="inline-flex items-center gap-1 rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300 hover:bg-rose-950 hover:text-rose-300"
+            title={
+              isActive
+                ? "Active part (shown in Drawing)"
+                : "Activate this part to display its drawing in Drawing"
+            }
+            onClick={onActivate}
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors ${
+              isActive
+                ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/40"
+                : "bg-neutral-800 text-neutral-300 ring-1 ring-neutral-700 hover:bg-emerald-500/15 hover:text-emerald-300 hover:ring-emerald-500/40"
+            }`}
           >
-            <Unlink className="h-2.5 w-2.5" />
-            Unlink
+            {isActive ? (
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            ) : (
+              <Power className="h-2.5 w-2.5" />
+            )}
+            {isActive ? "Active" : "Activate"}
           </button>
-        )}
+
+          {parentName && (
+            <button
+              type="button"
+              tabIndex={-1}
+              title={`Disconnect from "${parentName}"`}
+              onClick={onUnlink}
+              className="inline-flex items-center gap-1 rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300 hover:bg-rose-950 hover:text-rose-300"
+            >
+              <Unlink className="h-2.5 w-2.5" />
+              Unlink
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="space-y-2">
@@ -308,7 +340,9 @@ function InPlacePartEditor({
 export function ProjectWorkspace({
   project,
   selectedPartId,
+  activePartId,
   onSelectPart,
+  onActivatePart,
   onRenameProject,
   onAddPart,
   onUpdatePart,
@@ -701,6 +735,16 @@ export function ProjectWorkspace({
             {project.dimensions.length}{" "}
             {project.dimensions.length === 1 ? "dimension" : "dimensions"}
           </span>
+
+          {activePartId && partsById.has(activePartId) && (
+            <span className="hidden items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-300 ring-1 ring-emerald-500/30 md:inline-flex">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              Active:{" "}
+              <span className="max-w-[160px] truncate text-emerald-200">
+                {partsById.get(activePartId)?.name.trim() || "Untitled Part"}
+              </span>
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-1 rounded bg-neutral-900 px-1 py-0.5 ring-1 ring-neutral-800">
@@ -943,11 +987,13 @@ export function ProjectWorkspace({
                       <InPlacePartEditor
                         key={part.id}
                         part={part}
+                        isActive={part.id === activePartId}
                         parentName={parentName}
                         attachedDrawings={attachedDrawings}
                         dimCountByDrawing={dimCountByDrawing}
                         x={node.x}
                         y={node.y}
+                        onActivate={() => onActivatePart(part.id)}
                         onUpdate={(patch) => onUpdatePart(part.id, patch)}
                         onDone={() => setEditingPartId(null)}
                         onUnlink={() => onReparentPart(part.id, null)}
@@ -963,6 +1009,7 @@ export function ProjectWorkspace({
                   }
 
                   const isSelected = part.id === selectedPartId;
+                  const isActive = part.id === activePartId;
                   const isDropTarget = hoveredTargetId === part.id;
                   const isDraggingThis =
                     pointerDrag?.kind === "card" &&
@@ -996,9 +1043,11 @@ export function ProjectWorkspace({
                       className={`group absolute flex cursor-grab flex-col justify-between rounded-lg border p-2.5 shadow-lg transition-shadow select-none ${
                         isDropTarget
                           ? "border-blue-400 bg-blue-950/50 ring-2 ring-blue-500/70"
-                          : isSelected
-                            ? "border-neutral-400 bg-neutral-900 ring-2 ring-blue-500/40"
-                            : "border-neutral-700/90 bg-neutral-950/95 hover:border-neutral-500"
+                          : isActive
+                            ? "border-emerald-500/75 bg-neutral-900 ring-2 ring-emerald-500/35"
+                            : isSelected
+                              ? "border-neutral-400 bg-neutral-900 ring-2 ring-blue-500/40"
+                              : "border-neutral-700/90 bg-neutral-950/95 hover:border-neutral-500"
                       } ${isDraggingThis ? "opacity-40" : ""}`}
                     >
                       {/* Left Port */}
@@ -1059,18 +1108,44 @@ export function ProjectWorkspace({
                           </div>
                         </div>
 
-                        <button
-                          type="button"
-                          title="Edit part in-place"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onSelectPart(part.id);
-                            setEditingPartId(part.id);
-                          }}
-                          className="shrink-0 rounded p-1 text-neutral-500 opacity-0 transition-opacity hover:bg-neutral-800 hover:text-neutral-100 group-hover:opacity-100 focus:opacity-100"
-                        >
-                          <Pencil className="h-3 w-3" />
-                        </button>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button
+                            type="button"
+                            title="Edit part in-place"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectPart(part.id);
+                              setEditingPartId(part.id);
+                            }}
+                            className="rounded p-1 text-neutral-500 opacity-0 transition-opacity hover:bg-neutral-800 hover:text-neutral-100 group-hover:opacity-100 focus:opacity-100"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            title={
+                              isActive
+                                ? "Active part (shown in Drawing)"
+                                : "Activate this part to display its drawing in Drawing"
+                            }
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onActivatePart(part.id);
+                            }}
+                            className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium transition-colors ${
+                              isActive
+                                ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/40"
+                                : "bg-neutral-800/90 text-neutral-400 ring-1 ring-neutral-700/80 hover:bg-emerald-500/15 hover:text-emerald-300 hover:ring-emerald-500/40"
+                            }`}
+                          >
+                            {isActive ? (
+                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                            ) : (
+                              <Power className="h-2.5 w-2.5" />
+                            )}
+                            {isActive ? "Active" : "Activate"}
+                          </button>
+                        </div>
                       </div>
 
                       {/* Middle: attached PDF chips */}

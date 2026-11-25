@@ -56,6 +56,7 @@ export default function App() {
   const [project, setProject] = useState<ProjectData | null>(null);
   const [projectFilePath, setProjectFilePath] = useState<string | null>(null);
   const [selectedPartId, setSelectedPartId] = useState<string | null>(null);
+  const [activePartId, setActivePartId] = useState<string | null>(null);
 
   const [activeDrawingId, setActiveDrawingId] = useState<string | null>(null);
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
@@ -87,11 +88,17 @@ export default function App() {
   isDirtyRef.current = isDirty;
   const isSavingRef = useRef<boolean>(false);
   const editRevisionRef = useRef<number>(0);
+  const drawingLoadSeqRef = useRef<number>(0);
 
   const markDirty = useCallback(() => {
     editRevisionRef.current += 1;
     setIsDirty(true);
   }, []);
+
+  const activePart = useMemo(
+    () => project?.parts.find((p) => p.id === activePartId) ?? null,
+    [project, activePartId],
+  );
 
   const activeDrawing = useMemo(
     () => project?.drawings.find((d) => d.id === activeDrawingId) ?? null,
@@ -148,9 +155,11 @@ export default function App() {
       // Ignore outside Tauri runtime
     }
     const fresh = createEmptyProject("Untitled Project");
+    drawingLoadSeqRef.current += 1;
     setProject(fresh);
     setProjectFilePath(null);
     setSelectedPartId(null);
+    setActivePartId(null);
     setActiveDrawingId(null);
     setPdfBytes(null);
     setCurrentPage(1);
@@ -183,9 +192,12 @@ export default function App() {
         imported.filename,
         1,
       );
+      drawingLoadSeqRef.current += 1;
       setProject(nextProject);
       setProjectFilePath(null);
-      setSelectedPartId(nextProject.parts[0]?.id ?? null);
+      const firstPartId = nextProject.parts[0]?.id ?? null;
+      setSelectedPartId(firstPartId);
+      setActivePartId(firstPartId);
       setActiveDrawingId(imported.drawingId);
       setPdfBytes(imported.pdfBytes);
       setCurrentPage(1);
@@ -208,9 +220,17 @@ export default function App() {
       if (!path) return;
       const opened = await openProject(path);
       const normalized = normalizeLoadedProject(opened.project);
+      drawingLoadSeqRef.current += 1;
       setProject(normalized);
       setProjectFilePath(path);
-      setSelectedPartId(normalized.parts[0]?.id ?? null);
+      const ownerPart = opened.activeDrawingId
+        ? normalized.parts.find((p) =>
+            p.drawingIds.includes(opened.activeDrawingId!),
+          )
+        : undefined;
+      const initialPartId = ownerPart?.id ?? normalized.parts[0]?.id ?? null;
+      setSelectedPartId(initialPartId);
+      setActivePartId(initialPartId);
       setActiveDrawingId(opened.activeDrawingId);
       setPdfBytes(opened.pdfBytes);
       setCurrentPage(1);
@@ -318,9 +338,11 @@ export default function App() {
     } catch {
       // ignore outside Tauri
     }
+    drawingLoadSeqRef.current += 1;
     setProject(null);
     setProjectFilePath(null);
     setSelectedPartId(null);
+    setActivePartId(null);
     setActiveDrawingId(null);
     setPdfBytes(null);
     setCurrentPage(1);
@@ -429,7 +451,11 @@ export default function App() {
       if (selectedPartId && preview.removedPartIds.includes(selectedPartId)) {
         setSelectedPartId(preview.remainingParts[0]?.id ?? null);
       }
+      if (activePartId && preview.removedPartIds.includes(activePartId)) {
+        setActivePartId(null);
+      }
       if (activeDrawingId && removedSet.has(activeDrawingId)) {
+        drawingLoadSeqRef.current += 1;
         setActiveDrawingId(null);
         setPdfBytes(null);
         setSelectedDimensionId(null);
@@ -438,7 +464,7 @@ export default function App() {
       }
       markDirty();
     },
-    [project, selectedPartId, activeDrawingId, markDirty],
+    [project, selectedPartId, activePartId, activeDrawingId, markDirty],
   );
 
   const handleAttachPdf = useCallback(
@@ -466,13 +492,22 @@ export default function App() {
             ),
           };
         });
+        if (activePartId === partId && !activeDrawingId) {
+          drawingLoadSeqRef.current += 1;
+          setActiveDrawingId(imported.drawingId);
+          setPdfBytes(imported.pdfBytes);
+          setCurrentPage(1);
+          setSelectedDimensionId(null);
+          setPlacingDimensionId(null);
+          setFitRequestKey((k) => k + 1);
+        }
         markDirty();
         showStatus("info", `Attached "${imported.filename}"`);
       } catch (err) {
         showStatus("error", err instanceof Error ? err.message : String(err));
       }
     },
-    [project, markDirty, showStatus],
+    [project, activePartId, activeDrawingId, markDirty, showStatus],
   );
 
   const handleDetachPdf = useCallback(
@@ -487,6 +522,10 @@ export default function App() {
         );
         if (!ok) return;
       }
+      const ownerPart = project.parts.find((p) => p.id === partId);
+      const fallbackDrawingId =
+        ownerPart?.drawingIds.find((id) => id !== drawingId) ?? null;
+
       try {
         await removeDrawingBytes(drawingId);
       } catch {
@@ -508,11 +547,32 @@ export default function App() {
         };
       });
       if (activeDrawingId === drawingId) {
-        setActiveDrawingId(null);
-        setPdfBytes(null);
-        setSelectedDimensionId(null);
-        setEditingDimensionId(null);
-        setPlacingDimensionId(null);
+        const seq = ++drawingLoadSeqRef.current;
+        if (fallbackDrawingId) {
+          try {
+            const bytes = await getDrawingBytes(fallbackDrawingId);
+            if (drawingLoadSeqRef.current === seq) {
+              setActiveDrawingId(fallbackDrawingId);
+              setPdfBytes(bytes);
+              setCurrentPage(1);
+              setSelectedDimensionId(null);
+              setEditingDimensionId(null);
+              setPlacingDimensionId(null);
+              setFitRequestKey((k) => k + 1);
+            }
+          } catch {
+            if (drawingLoadSeqRef.current === seq) {
+              setActiveDrawingId(null);
+              setPdfBytes(null);
+            }
+          }
+        } else {
+          setActiveDrawingId(null);
+          setPdfBytes(null);
+          setSelectedDimensionId(null);
+          setEditingDimensionId(null);
+          setPlacingDimensionId(null);
+        }
       }
       markDirty();
     },
@@ -551,15 +611,79 @@ export default function App() {
     setPlacingDimensionId(null);
   }, []);
 
+  const handleActivatePart = useCallback(
+    async (partId: string) => {
+      if (!project) return;
+      const part = project.parts.find((p) => p.id === partId);
+      if (!part) return;
+      if (editingDimensionId) {
+        handleCancelEditing();
+      }
+      setActivePartId(partId);
+      setSelectedPartId(partId);
+
+      const partLabel = part.name.trim() || "Untitled Part";
+      if (part.drawingIds.length === 0) {
+        drawingLoadSeqRef.current += 1;
+        setActiveDrawingId(null);
+        setPdfBytes(null);
+        setSelectedDimensionId(null);
+        setPlacingDimensionId(null);
+        showStatus("info", `Activated "${partLabel}" (no drawing attached)`);
+        return;
+      }
+
+      const targetDrawingId =
+        activeDrawingId && part.drawingIds.includes(activeDrawingId)
+          ? activeDrawingId
+          : part.drawingIds[0];
+
+      if (targetDrawingId !== activeDrawingId || !pdfBytes) {
+        const seq = ++drawingLoadSeqRef.current;
+        try {
+          const bytes = await getDrawingBytes(targetDrawingId);
+          if (drawingLoadSeqRef.current !== seq) return;
+          setActiveDrawingId(targetDrawingId);
+          setPdfBytes(bytes);
+          setCurrentPage(1);
+          setSelectedDimensionId(null);
+          setPlacingDimensionId(null);
+          setFitRequestKey((k) => k + 1);
+        } catch (err) {
+          showStatus("error", err instanceof Error ? err.message : String(err));
+          return;
+        }
+      }
+      showStatus("info", `Activated "${partLabel}"`);
+    },
+    [
+      project,
+      editingDimensionId,
+      handleCancelEditing,
+      activeDrawingId,
+      pdfBytes,
+      showStatus,
+    ],
+  );
+
   const handleOpenDrawing = useCallback(
     async (drawingId: string) => {
       if (!project) return;
       if (editingDimensionId) {
         handleCancelEditing();
       }
+      const ownerPart = project.parts.find((p) =>
+        p.drawingIds.includes(drawingId),
+      );
+      if (ownerPart) {
+        setActivePartId(ownerPart.id);
+        setSelectedPartId(ownerPart.id);
+      }
       try {
         if (drawingId !== activeDrawingId || !pdfBytes) {
+          const seq = ++drawingLoadSeqRef.current;
           const bytes = await getDrawingBytes(drawingId);
+          if (drawingLoadSeqRef.current !== seq) return;
           setActiveDrawingId(drawingId);
           setPdfBytes(bytes);
           setCurrentPage(1);
@@ -914,7 +1038,9 @@ export default function App() {
           <ProjectWorkspace
             project={project}
             selectedPartId={selectedPartId}
+            activePartId={activePartId}
             onSelectPart={setSelectedPartId}
+            onActivatePart={(id) => void handleActivatePart(id)}
             onRenameProject={handleRenameProject}
             onAddPart={handleAddPart}
             onUpdatePart={handleUpdatePart}
@@ -978,21 +1104,53 @@ export default function App() {
                     <Network className="h-5 w-5" />
                   </div>
                   <h2 className="text-sm font-semibold text-neutral-100">
-                    No Drawing Active
+                    {activePart
+                      ? `No Drawing Attached`
+                      : `No Drawing Active`}
                   </h2>
                   <p className="mt-1.5 text-xs leading-relaxed text-neutral-400">
-                    Open the{" "}
-                    <span className="font-medium text-neutral-200">Project</span>{" "}
-                    module to attach a PDF drawing to a part and open it here.
+                    {activePart ? (
+                      <>
+                        Active part{" "}
+                        <span className="font-medium text-neutral-200">
+                          {activePart.name.trim() || "Untitled Part"}
+                        </span>{" "}
+                        has no PDF drawing attached yet.
+                      </>
+                    ) : (
+                      <>
+                        Activate a part in the{" "}
+                        <span className="font-medium text-neutral-200">
+                          Project
+                        </span>{" "}
+                        module to display its PDF drawing here.
+                      </>
+                    )}
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => setActiveModule("project")}
-                    className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-neutral-100 px-4 py-2 text-xs font-medium text-neutral-950 hover:bg-white"
-                  >
-                    <Network className="h-3.5 w-3.5" />
-                    Go to Project
-                  </button>
+                  <div className="mt-4 flex items-center justify-center gap-2">
+                    {activePart && (
+                      <button
+                        type="button"
+                        onClick={() => void handleAttachPdf(activePart.id)}
+                        className="inline-flex items-center gap-1.5 rounded-md bg-neutral-100 px-3.5 py-2 text-xs font-medium text-neutral-950 hover:bg-white"
+                      >
+                        <FilePlus2 className="h-3.5 w-3.5" />
+                        Attach PDF
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setActiveModule("project")}
+                      className={`inline-flex items-center gap-1.5 rounded-md px-3.5 py-2 text-xs font-medium ${
+                        activePart
+                          ? "bg-neutral-800 text-neutral-200 hover:bg-neutral-700"
+                          : "bg-neutral-100 text-neutral-950 hover:bg-white"
+                      }`}
+                    >
+                      <Network className="h-3.5 w-3.5" />
+                      Go to Project
+                    </button>
+                  </div>
                 </div>
               </main>
             )}
