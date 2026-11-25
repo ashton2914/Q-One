@@ -12,7 +12,9 @@ import {
   createDefaultGdtSpec,
   createDefaultPointSpec,
   getAvailableDatums,
+  getGdtRules,
   getGdtSymbolGlyph,
+  sanitizeGdtSpec,
 } from "../annotations";
 import type { Dimension } from "../../types/project";
 
@@ -171,5 +173,39 @@ describe("dimensions", () => {
     expect(getGdtSymbolGlyph("position")).toBe("⌖");
     expect(createDefaultGdtSpec().datums).toHaveLength(3);
     expect(createDefaultPointSpec().datums).toHaveLength(3);
+  });
+
+  it("enforces ASME Y14.5 applicability rules per GD&T symbol and sanitizes disallowed fields", () => {
+    const flatness = getGdtRules("flatness");
+    expect(flatness.allowDiameterZone).toBe(false);
+    expect(flatness.allowMaterialCondition).toBe(false);
+    expect(flatness.allowDatums).toBe(false);
+
+    const runout = getGdtRules("total_runout");
+    expect(runout.allowDiameterZone).toBe(false);
+    expect(runout.allowMaterialCondition).toBe(false);
+    expect(runout.allowDatums).toBe(true);
+    expect(runout.allowDatumMaterialCondition).toBe(false);
+
+    const profile = getGdtRules("profile_surface");
+    expect(profile.allowDiameterZone).toBe(false);
+    expect(profile.allowMaterialCondition).toBe(false);
+    expect(profile.allowDatums).toBe(true);
+    expect(profile.allowDatumMaterialCondition).toBe(true);
+
+    const sanitized = sanitizeGdtSpec({
+      symbol: "flatness",
+      diameterZone: true,
+      tolerance: "0.08",
+      materialCondition: "MMC",
+      datums: [
+        { datum: "A", materialCondition: "MMC" },
+        { datum: "B", materialCondition: "" },
+        { datum: "", materialCondition: "" },
+      ],
+    });
+    expect(sanitized.diameterZone).toBe(false);
+    expect(sanitized.materialCondition).toBe("");
+    expect(sanitized.datums.every((d) => d.datum === "" && d.materialCondition === "")).toBe(true);
   });
 });

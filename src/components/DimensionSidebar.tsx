@@ -17,9 +17,11 @@ import {
   GDT_SYMBOL_OPTIONS,
   getAnnotationKind,
   getAvailableDatums,
+  getGdtRules,
   getGdtSymbolGlyph,
   getMaterialConditionGlyph,
   MATERIAL_CONDITION_OPTIONS,
+  sanitizeGdtSpec,
 } from "../lib/annotations";
 import {
   findTypeCompletion,
@@ -100,10 +102,15 @@ function normalizePointSpec(spec: PointSpec | null | undefined): PointSpec {
 }
 
 function FeatureControlFrame({ gdt }: { gdt: GdtSpec }) {
+  const rules = getGdtRules(gdt.symbol);
   const glyph = getGdtSymbolGlyph(gdt.symbol);
   const tolText = gdt.tolerance.trim() || "0.00";
-  const mcGlyph = getMaterialConditionGlyph(gdt.materialCondition);
-  const activeDatums = gdt.datums.filter((d) => d.datum.trim().length > 0);
+  const mcGlyph = rules.allowMaterialCondition
+    ? getMaterialConditionGlyph(gdt.materialCondition)
+    : "";
+  const activeDatums = rules.allowDatums
+    ? gdt.datums.filter((d) => d.datum.trim().length > 0)
+    : [];
 
   return (
     <div className="inline-flex max-w-full items-stretch overflow-hidden rounded border border-neutral-600 bg-neutral-950 font-mono text-[11px] text-neutral-100">
@@ -111,12 +118,16 @@ function FeatureControlFrame({ gdt }: { gdt: GdtSpec }) {
         {glyph}
       </span>
       <span className="flex items-center gap-0.5 border-l border-neutral-600 px-1.5 py-0.5">
-        {gdt.diameterZone && <span className="text-neutral-300">⌀</span>}
+        {rules.allowDiameterZone && gdt.diameterZone && (
+          <span className="text-neutral-300">⌀</span>
+        )}
         <span>{tolText}</span>
         {mcGlyph && <span className="text-amber-300">{mcGlyph}</span>}
       </span>
       {activeDatums.map((d, idx) => {
-        const dMc = getMaterialConditionGlyph(d.materialCondition);
+        const dMc = rules.allowDatumMaterialCondition
+          ? getMaterialConditionGlyph(d.materialCondition)
+          : "";
         return (
           <span
             key={idx}
@@ -155,6 +166,7 @@ function InlineEditCard({
   const kind = getAnnotationKind(dimension);
   const availableDatums = getAvailableDatums(allDimensions);
   const gdt = normalizeGdtSpec(dimension.gdt);
+  const gdtRules = getGdtRules(gdt.symbol);
   const point = normalizePointSpec(dimension.point);
 
   useEffect(() => {
@@ -209,7 +221,7 @@ function InlineEditCard({
   };
 
   const updateGdt = (patch: Partial<GdtSpec>) => {
-    onUpdate(dimension.id, { gdt: { ...gdt, ...patch } });
+    onUpdate(dimension.id, { gdt: sanitizeGdtSpec({ ...gdt, ...patch }) });
   };
 
   const updateGdtDatum = (index: number, patch: Partial<GdtDatumRef>) => {
@@ -555,12 +567,17 @@ function InlineEditCard({
               <div className="grid grid-cols-[32px_1fr_92px] gap-1.5">
                 <button
                   type="button"
-                  title="Toggle cylindrical tolerance zone (⌀)"
+                  disabled={!gdtRules.allowDiameterZone}
+                  title={
+                    gdtRules.allowDiameterZone
+                      ? "Toggle cylindrical tolerance zone (⌀)"
+                      : "Diameter zone (⌀) is not applicable for this GD&T characteristic"
+                  }
                   onClick={() =>
                     updateGdt({ diameterZone: !gdt.diameterZone })
                   }
-                  className={`rounded border font-mono text-xs font-semibold transition-colors ${
-                    gdt.diameterZone
+                  className={`rounded border font-mono text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:border-neutral-800 disabled:bg-neutral-950/50 disabled:text-neutral-600 disabled:opacity-45 ${
+                    gdtRules.allowDiameterZone && gdt.diameterZone
                       ? "border-blue-500 bg-blue-600/20 text-blue-300"
                       : "border-neutral-700 bg-neutral-950 text-neutral-500 hover:text-neutral-200"
                   }`}
@@ -576,13 +593,19 @@ function InlineEditCard({
                 />
                 <select
                   aria-label="Material condition"
-                  value={gdt.materialCondition}
+                  disabled={!gdtRules.allowMaterialCondition}
+                  title={
+                    gdtRules.allowMaterialCondition
+                      ? "Material condition modifier"
+                      : "Material condition modifier is not applicable for this GD&T characteristic"
+                  }
+                  value={gdtRules.allowMaterialCondition ? gdt.materialCondition : ""}
                   onChange={(e) =>
                     updateGdt({
                       materialCondition: e.target.value as MaterialCondition,
                     })
                   }
-                  className="w-full rounded border border-neutral-700 bg-neutral-950 px-1.5 py-1 text-xs text-neutral-100 focus:border-neutral-400 focus:outline-none"
+                  className="w-full rounded border border-neutral-700 bg-neutral-950 px-1.5 py-1 text-xs text-neutral-100 focus:border-neutral-400 focus:outline-none disabled:cursor-not-allowed disabled:border-neutral-800 disabled:text-neutral-600 disabled:opacity-45"
                 >
                   {MATERIAL_CONDITION_OPTIONS.map((mc) => (
                     <option key={mc.value} value={mc.value}>
@@ -594,20 +617,31 @@ function InlineEditCard({
             </div>
 
             {/* Datum References (Primary / Secondary / Tertiary) */}
-            <div>
+            <div className={!gdtRules.allowDatums ? "opacity-45" : ""}>
               <div className="mb-1 flex items-center justify-between">
                 <label className="text-[11px] text-neutral-400">
                   Datum References
                 </label>
-                {availableDatums.length === 0 && (
-                  <span className="text-[10px] text-amber-400/90">
-                    Add Datum first
+                {!gdtRules.allowDatums ? (
+                  <span className="text-[10px] text-neutral-500">
+                    Not applicable
                   </span>
+                ) : (
+                  availableDatums.length === 0 && (
+                    <span className="text-[10px] text-amber-400/90">
+                      Add Datum first
+                    </span>
+                  )
                 )}
               </div>
               <div className="grid grid-cols-3 gap-1.5">
                 {["1st", "2nd", "3rd"].map((slotLabel, idx) => {
                   const slot = gdt.datums[idx];
+                  const datumDisabled = !gdtRules.allowDatums;
+                  const mcDisabled =
+                    !gdtRules.allowDatums ||
+                    !gdtRules.allowDatumMaterialCondition ||
+                    !slot.datum;
                   return (
                     <div
                       key={slotLabel}
@@ -618,25 +652,26 @@ function InlineEditCard({
                       </div>
                       <select
                         aria-label={`${slotLabel} datum`}
-                        value={slot.datum}
+                        disabled={datumDisabled}
+                        value={datumDisabled ? "" : slot.datum}
                         onChange={(e) =>
                           updateGdtDatum(idx, { datum: e.target.value })
                         }
-                        className="w-full rounded border border-neutral-700 bg-neutral-950 px-1 py-0.5 font-mono text-xs text-neutral-100 focus:border-neutral-400 focus:outline-none"
+                        className="w-full rounded border border-neutral-700 bg-neutral-950 px-1 py-0.5 font-mono text-xs text-neutral-100 focus:border-neutral-400 focus:outline-none disabled:cursor-not-allowed disabled:border-neutral-800 disabled:text-neutral-600"
                       >
                         {renderDatumSelectOptions(slot.datum)}
                       </select>
                       <select
                         aria-label={`${slotLabel} datum condition`}
-                        disabled={!slot.datum}
-                        value={slot.materialCondition}
+                        disabled={mcDisabled}
+                        value={mcDisabled ? "" : slot.materialCondition}
                         onChange={(e) =>
                           updateGdtDatum(idx, {
                             materialCondition: e.target
                               .value as MaterialCondition,
                           })
                         }
-                        className="w-full rounded border border-neutral-800 bg-neutral-950 px-1 py-0.5 text-[11px] text-neutral-300 focus:border-neutral-400 focus:outline-none disabled:opacity-40"
+                        className="w-full rounded border border-neutral-800 bg-neutral-950 px-1 py-0.5 text-[11px] text-neutral-300 focus:border-neutral-400 focus:outline-none disabled:cursor-not-allowed disabled:text-neutral-600 disabled:opacity-50"
                       >
                         <option value="">RFS</option>
                         <option value="MMC">Ⓜ MMC</option>

@@ -87,6 +87,122 @@ export const MATERIAL_CONDITION_OPTIONS: Array<{
   { value: "LMC", glyph: "Ⓛ", label: "Ⓛ LMC" },
 ];
 
+export interface GdtApplicability {
+  allowDiameterZone: boolean;
+  allowMaterialCondition: boolean;
+  allowDatums: boolean;
+  allowDatumMaterialCondition: boolean;
+}
+
+const GDT_RULES: Record<GdtSymbol, GdtApplicability> = {
+  flatness: {
+    allowDiameterZone: false,
+    allowMaterialCondition: false,
+    allowDatums: false,
+    allowDatumMaterialCondition: false,
+  },
+  straightness: {
+    allowDiameterZone: true,
+    allowMaterialCondition: true,
+    allowDatums: false,
+    allowDatumMaterialCondition: false,
+  },
+  circularity: {
+    allowDiameterZone: false,
+    allowMaterialCondition: false,
+    allowDatums: false,
+    allowDatumMaterialCondition: false,
+  },
+  cylindricity: {
+    allowDiameterZone: false,
+    allowMaterialCondition: false,
+    allowDatums: false,
+    allowDatumMaterialCondition: false,
+  },
+  profile_line: {
+    allowDiameterZone: false,
+    allowMaterialCondition: false,
+    allowDatums: true,
+    allowDatumMaterialCondition: true,
+  },
+  profile_surface: {
+    allowDiameterZone: false,
+    allowMaterialCondition: false,
+    allowDatums: true,
+    allowDatumMaterialCondition: true,
+  },
+  perpendicularity: {
+    allowDiameterZone: true,
+    allowMaterialCondition: true,
+    allowDatums: true,
+    allowDatumMaterialCondition: true,
+  },
+  angularity: {
+    allowDiameterZone: true,
+    allowMaterialCondition: true,
+    allowDatums: true,
+    allowDatumMaterialCondition: true,
+  },
+  parallelism: {
+    allowDiameterZone: true,
+    allowMaterialCondition: true,
+    allowDatums: true,
+    allowDatumMaterialCondition: true,
+  },
+  position: {
+    allowDiameterZone: true,
+    allowMaterialCondition: true,
+    allowDatums: true,
+    allowDatumMaterialCondition: true,
+  },
+  concentricity: {
+    allowDiameterZone: true,
+    allowMaterialCondition: false,
+    allowDatums: true,
+    allowDatumMaterialCondition: false,
+  },
+  symmetry: {
+    allowDiameterZone: false,
+    allowMaterialCondition: false,
+    allowDatums: true,
+    allowDatumMaterialCondition: false,
+  },
+  circular_runout: {
+    allowDiameterZone: false,
+    allowMaterialCondition: false,
+    allowDatums: true,
+    allowDatumMaterialCondition: false,
+  },
+  total_runout: {
+    allowDiameterZone: false,
+    allowMaterialCondition: false,
+    allowDatums: true,
+    allowDatumMaterialCondition: false,
+  },
+};
+
+export function getGdtRules(symbol: GdtSymbol | string): GdtApplicability {
+  return GDT_RULES[symbol as GdtSymbol] ?? GDT_RULES.position;
+}
+
+export function sanitizeGdtSpec(spec: GdtSpec): GdtSpec {
+  const rules = getGdtRules(spec.symbol);
+  return {
+    ...spec,
+    diameterZone: rules.allowDiameterZone ? spec.diameterZone : false,
+    materialCondition: rules.allowMaterialCondition
+      ? spec.materialCondition
+      : "",
+    datums: spec.datums.map((d) => ({
+      datum: rules.allowDatums ? d.datum : "",
+      materialCondition:
+        rules.allowDatums && rules.allowDatumMaterialCondition && d.datum
+          ? d.materialCondition
+          : "",
+    })),
+  };
+}
+
 export function getAnnotationKind(dim: Pick<Dimension, "kind">): AnnotationKind {
   return dim.kind ?? "linear";
 }
