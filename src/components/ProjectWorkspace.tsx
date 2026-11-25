@@ -3,8 +3,6 @@ import {
   ArrowUpToLine,
   Box,
   Check,
-  ChevronDown,
-  ChevronRight,
   ExternalLink,
   FilePlus2,
   FileText,
@@ -68,6 +66,7 @@ type PointerDragState =
     };
 
 const CARD_DRAG_THRESHOLD_PX = 6;
+const EMPTY_COLLAPSED = new Set<string>();
 
 interface InPlacePartEditorProps {
   part: Part;
@@ -330,7 +329,6 @@ export function ProjectWorkspace({
   zoomRef.current = zoom;
 
   const [isPanning, setIsPanning] = useState<boolean>(false);
-  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
   const [editingPartId, setEditingPartId] = useState<string | null>(null);
   const [pointerDrag, setPointerDrag] = useState<PointerDragState | null>(null);
   const [hoveredTargetId, setHoveredTargetId] = useState<
@@ -373,8 +371,8 @@ export function ProjectWorkspace({
   }, [project.dimensions]);
 
   const layout = useMemo(
-    () => layoutPartTree(project.parts, collapsedIds),
-    [project.parts, collapsedIds],
+    () => layoutPartTree(project.parts, EMPTY_COLLAPSED),
+    [project.parts],
   );
 
   // Cmd/Ctrl + wheel zoom on the BOM canvas
@@ -517,12 +515,6 @@ export function ProjectWorkspace({
             canReparentPart(partsRef.current, current.partId, hitId)
           ) {
             onReparentPart(current.partId, hitId);
-            setCollapsedIds((prev) => {
-              if (!prev.has(hitId)) return prev;
-              const next = new Set(prev);
-              next.delete(hitId);
-              return next;
-            });
           }
         }
       } else {
@@ -536,12 +528,6 @@ export function ProjectWorkspace({
             const child = partsRef.current.find((p) => p.id === hitId);
             if (child && child.parentId !== current.sourcePartId) {
               onReparentPart(hitId, current.sourcePartId);
-              setCollapsedIds((prev) => {
-                if (!prev.has(current.sourcePartId)) return prev;
-                const next = new Set(prev);
-                next.delete(current.sourcePartId);
-                return next;
-              });
             }
           }
         } else {
@@ -555,12 +541,6 @@ export function ProjectWorkspace({
           ) {
             if (src && src.parentId !== hitId) {
               onReparentPart(current.sourcePartId, hitId);
-              setCollapsedIds((prev) => {
-                if (!prev.has(hitId)) return prev;
-                const next = new Set(prev);
-                next.delete(hitId);
-                return next;
-              });
             }
           } else if (!hitId && src && src.parentId !== null) {
             onReparentPart(current.sourcePartId, null);
@@ -581,18 +561,6 @@ export function ProjectWorkspace({
       window.removeEventListener("pointercancel", handleUp);
     };
   }, [pointerDrag !== null, onReparentPart, onSelectPart]);
-
-  const toggleCollapse = (partId: string) => {
-    setCollapsedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(partId)) {
-        next.delete(partId);
-      } else {
-        next.add(partId);
-      }
-      return next;
-    });
-  };
 
   const handleFitCanvas = () => {
     if (!viewportRef.current || layout.width === 0 || layout.height === 0) {
@@ -995,7 +963,6 @@ export function ProjectWorkspace({
                   }
 
                   const isSelected = part.id === selectedPartId;
-                  const isCollapsed = collapsedIds.has(part.id);
                   const isDropTarget = hoveredTargetId === part.id;
                   const isDraggingThis =
                     pointerDrag?.kind === "card" &&
@@ -1092,45 +1059,18 @@ export function ProjectWorkspace({
                           </div>
                         </div>
 
-                        <div className="flex shrink-0 items-center gap-1">
-                          <button
-                            type="button"
-                            title="Edit part in-place"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onSelectPart(part.id);
-                              setEditingPartId(part.id);
-                            }}
-                            className="rounded p-1 text-neutral-500 opacity-0 transition-opacity hover:bg-neutral-800 hover:text-neutral-100 group-hover:opacity-100 focus:opacity-100"
-                          >
-                            <Pencil className="h-3 w-3" />
-                          </button>
-
-                          {node.hasChildren && (
-                            <button
-                              type="button"
-                              title={
-                                isCollapsed
-                                  ? `Expand ${node.childCount} sub-parts`
-                                  : "Collapse sub-parts"
-                              }
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleCollapse(part.id);
-                              }}
-                              className="inline-flex items-center gap-0.5 rounded bg-neutral-800 px-1 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-700 hover:text-white"
-                            >
-                              {isCollapsed ? (
-                                <>
-                                  <ChevronRight className="h-3 w-3" />
-                                  <span>{node.childCount}</span>
-                                </>
-                              ) : (
-                                <ChevronDown className="h-3 w-3" />
-                              )}
-                            </button>
-                          )}
-                        </div>
+                        <button
+                          type="button"
+                          title="Edit part in-place"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectPart(part.id);
+                            setEditingPartId(part.id);
+                          }}
+                          className="shrink-0 rounded p-1 text-neutral-500 opacity-0 transition-opacity hover:bg-neutral-800 hover:text-neutral-100 group-hover:opacity-100 focus:opacity-100"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
                       </div>
 
                       {/* Middle: attached PDF chips */}
@@ -1189,12 +1129,6 @@ export function ProjectWorkspace({
                             title="Add sub-part"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setCollapsedIds((prev) => {
-                                if (!prev.has(part.id)) return prev;
-                                const next = new Set(prev);
-                                next.delete(part.id);
-                                return next;
-                              });
                               onAddPart(part.id);
                             }}
                             className="inline-flex items-center gap-0.5 rounded bg-neutral-800 px-1.5 py-0.5 text-neutral-300 hover:bg-neutral-700 hover:text-white"
