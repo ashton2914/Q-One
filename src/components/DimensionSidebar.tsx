@@ -23,12 +23,12 @@ export function DimensionSidebar({
 }: DimensionSidebarProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2.5">
+      <div className="flex items-center justify-between border-b border-neutral-800 px-3 py-2.5">
         <div className="flex items-center gap-2">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
             Dimensions
           </h2>
-          <span className="rounded-full bg-slate-800 px-2 py-0.5 font-mono text-[11px] text-slate-400">
+          <span className="rounded-full bg-neutral-800 px-2 py-0.5 font-mono text-[11px] text-neutral-400">
             {dimensions.length}
           </span>
         </div>
@@ -37,7 +37,7 @@ export function DimensionSidebar({
           type="button"
           disabled={!hasProject}
           onClick={onAddDimension}
-          className="inline-flex items-center gap-1 rounded bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+          className="inline-flex items-center gap-1 rounded bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-500"
         >
           <Plus className="h-3.5 w-3.5" />
           Add
@@ -46,12 +46,12 @@ export function DimensionSidebar({
 
       <div className="flex-1 overflow-y-auto p-2">
         {!hasProject ? (
-          <div className="px-3 py-8 text-center text-xs text-slate-500">
+          <div className="px-3 py-8 text-center text-xs text-neutral-500">
             Open a PDF drawing or project to manage dimensions.
           </div>
         ) : dimensions.length === 0 ? (
-          <div className="px-3 py-8 text-center text-xs text-slate-500">
-            No dimensions yet. Click <span className="font-medium text-slate-300">+ Add</span> to
+          <div className="px-3 py-8 text-center text-xs text-neutral-500">
+            No dimensions yet. Click <span className="font-medium text-neutral-300">+ Add</span> to
             create your first dimension and mark it on the drawing.
           </div>
         ) : (
@@ -75,8 +75,8 @@ export function DimensionSidebar({
                     }}
                     className={`group flex cursor-pointer items-start justify-between gap-2 rounded-md border px-2.5 py-2 transition-colors ${
                       isSelected
-                        ? "border-blue-500/60 bg-blue-600/15 text-slate-100"
-                        : "border-transparent bg-slate-900/60 text-slate-300 hover:border-slate-700 hover:bg-slate-800/70"
+                        ? "border-blue-500/60 bg-blue-600/15 text-neutral-100"
+                        : "border-transparent bg-neutral-900/60 text-neutral-300 hover:border-neutral-700 hover:bg-neutral-800/70"
                     }`}
                   >
                     <div className="flex min-w-0 items-start gap-2.5">
@@ -91,17 +91,17 @@ export function DimensionSidebar({
                       </span>
 
                       <div className="min-w-0">
-                        <div className="truncate text-xs font-medium text-slate-100">
+                        <div className="truncate text-xs font-medium text-neutral-100">
                           {dim.name.trim() || "Untitled Dimension"}
                         </div>
-                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-400">
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-neutral-400">
                           {dim.nominal.trim() ? (
-                            <span className="font-mono text-slate-300">
+                            <span className="font-mono text-neutral-300">
                               {dim.nominal.trim()}
                               {tol ? ` ${tol}` : ""} {dim.unit}
                             </span>
                           ) : (
-                            <span className="italic text-slate-500">No nominal</span>
+                            <span className="italic text-neutral-500">No nominal</span>
                           )}
 
                           {isPlacing ? (
@@ -128,7 +128,7 @@ export function DimensionSidebar({
                         e.stopPropagation();
                         onDeleteDimension(dim.id);
                       }}
-                      className="rounded p-1 text-slate-500 opacity-0 transition-opacity hover:bg-rose-950 hover:text-rose-400 group-hover:opacity-100 focus:opacity-100"
+                      className="rounded p-1 text-neutral-500 opacity-0 transition-opacity hover:bg-rose-950 hover:text-rose-400 group-hover:opacity-100 focus:opacity-100"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>

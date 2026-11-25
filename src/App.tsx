@@ -338,7 +338,7 @@ export default function App() {
     project?.dimensions.find((d) => d.id === selectedDimensionId) ?? null;
 
   return (
-    <div className="flex h-full flex-col bg-slate-950 text-slate-100">
+    <div className="flex h-full flex-col bg-neutral-950 text-neutral-100">
       <TopToolbar
         projectName={project?.name ?? null}
         isDirty={isDirty}
@@ -375,7 +375,7 @@ export default function App() {
       )}
 
       <div className="flex min-h-0 flex-1">
-        <aside className="flex w-80 shrink-0 flex-col border-r border-slate-800 bg-slate-950">
+        <aside className="flex w-80 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950">
           <DimensionSidebar
             dimensions={project?.dimensions ?? []}
             selectedDimensionId={selectedDimensionId}
@@ -415,18 +415,18 @@ export default function App() {
             onCancelPlacing={() => setPlacingDimensionId(null)}
           />
         ) : (
-          <main className="flex flex-1 items-center justify-center bg-slate-900 p-8">
-            <div className="max-w-md rounded-xl border border-slate-800 bg-slate-950/90 p-8 text-center shadow-xl">
-              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600/20 text-lg font-bold text-blue-400 ring-1 ring-blue-500/40">
+          <main className="flex flex-1 items-center justify-center bg-neutral-900 p-8">
+            <div className="max-w-md rounded-xl border border-neutral-800 bg-neutral-950/90 p-8 text-center shadow-xl">
+              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-neutral-800 text-lg font-bold text-neutral-100 ring-1 ring-neutral-700">
                 DM
               </div>
-              <h1 className="text-lg font-semibold text-slate-100">
+              <h1 className="text-lg font-semibold text-neutral-100">
                 DM-One Dimension Manager
               </h1>
-              <p className="mt-2 text-xs leading-relaxed text-slate-400">
+              <p className="mt-2 text-xs leading-relaxed text-neutral-400">
                 Open a PDF engineering drawing to compile your dimension list and
                 place balloon markers, or resume an existing{" "}
-                <span className="font-mono text-slate-300">.dmone</span> project.
+                <span className="font-mono text-neutral-300">.dmone</span> project.
               </p>
               <div className="mt-6 flex items-center justify-center gap-3">
                 <button
@@ -440,7 +440,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => void handleOpenProject()}
-                  className="inline-flex items-center gap-2 rounded-md bg-slate-800 px-4 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700"
+                  className="inline-flex items-center gap-2 rounded-md bg-neutral-800 px-4 py-2 text-xs font-medium text-neutral-200 hover:bg-neutral-700"
                 >
                   <FolderOpen className="h-4 w-4 text-amber-400" />
                   Open Project (.dmone)

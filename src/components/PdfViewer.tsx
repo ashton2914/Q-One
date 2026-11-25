@@ -213,7 +213,7 @@ export function PdfViewer({
     : null;
 
   return (
-    <div className="relative flex flex-1 flex-col overflow-hidden bg-slate-900">
+    <div className="relative flex flex-1 flex-col overflow-hidden bg-neutral-900">
       {placingDimension && (
         <div className="z-30 flex items-center justify-between border-b border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-medium text-blue-100">
           <div className="flex items-center gap-2">
@@ -242,7 +242,7 @@ export function PdfViewer({
 
       <div ref={containerRef} className="flex-1 overflow-auto p-6">
         <div className="mx-auto flex min-h-full w-fit items-center justify-center">
-          <div className="relative bg-white shadow-2xl ring-1 ring-slate-700/80">
+          <div className="relative bg-white shadow-2xl ring-1 ring-neutral-700/80">
             <canvas ref={canvasRef} className="block" />
             {drawingId && pageSize.width > 0 && pageSize.height > 0 && (
               <BalloonOverlay
