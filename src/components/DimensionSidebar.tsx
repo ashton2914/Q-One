@@ -328,12 +328,12 @@ function InlineEditCard({
 
         <div>
           <label className="mb-1 block text-[11px] text-neutral-400">
-            Notes
+            Description
           </label>
           <input
             type="text"
             value={dimension.notes}
-            placeholder="Inspection notes, GD&T reference..."
+            placeholder="Dimension description (e.g. A Cover Width)"
             onChange={(e) => onUpdate(dimension.id, { notes: e.target.value })}
             className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
           />
