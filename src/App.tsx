@@ -330,17 +330,21 @@ export default function App() {
     persistProject,
   ]);
 
-  const handleSelectDimension = useCallback(
+  const handleSelectFromSidebar = useCallback(
     (id: string) => {
       setSelectedDimensionId(id);
       const dim = project?.dimensions.find((d) => d.id === id);
-      if (dim?.marker) {
+      if (dim?.marker && dim.marker.page !== currentPage) {
         setCurrentPage(dim.marker.page);
         setScrollToPageRequest({ page: dim.marker.page, key: Date.now() });
       }
     },
-    [project],
+    [project, currentPage],
   );
+
+  const handleSelectFromDrawing = useCallback((id: string) => {
+    setSelectedDimensionId(id);
+  }, []);
 
   const handleUpdateDimension = useCallback(
     (id: string, patch: Partial<Dimension>) => {
@@ -481,7 +485,7 @@ export default function App() {
             focusNameKey={focusNameKey}
             hasProject={project !== null}
             onAddDimension={handleAddDimension}
-            onSelectDimension={handleSelectDimension}
+            onSelectDimension={handleSelectFromSidebar}
             onStartEditing={handleStartEditing}
             onFinishEditing={handleFinishEditing}
             onCancelEditing={handleCancelEditing}
@@ -510,7 +514,7 @@ export default function App() {
             onZoomChange={setZoom}
             onFitToView={() => setFitRequestKey((k) => k + 1)}
             onPlaceMarker={handlePlaceMarker}
-            onSelectDimension={handleSelectDimension}
+            onSelectDimension={handleSelectFromDrawing}
             onMoveMarker={handleMoveMarker}
             onCancelPlacing={() => setPlacingDimensionId(null)}
           />
