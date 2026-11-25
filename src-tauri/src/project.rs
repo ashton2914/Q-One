@@ -31,6 +31,10 @@ pub struct MarkerPosition {
     pub height: f64,
 }
 
+fn default_quantity() -> u32 {
+    1
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Dimension {
@@ -39,6 +43,8 @@ pub struct Dimension {
     #[serde(default)]
     pub dimension_type: String,
     pub name: String,
+    #[serde(default = "default_quantity")]
+    pub quantity: u32,
     pub nominal: String,
     pub upper_tol: String,
     pub lower_tol: String,
@@ -339,6 +345,7 @@ mod tests {
                     balloon_number: 1,
                     dimension_type: "CTQ".to_string(),
                     name: "Outer Diameter".to_string(),
+                    quantity: 3,
                     nominal: "25.00".to_string(),
                     upper_tol: "+0.05".to_string(),
                     lower_tol: "-0.05".to_string(),
@@ -358,6 +365,7 @@ mod tests {
                     balloon_number: 2,
                     dimension_type: String::new(),
                     name: "Slot Width".to_string(),
+                    quantity: 1,
                     nominal: "4.20".to_string(),
                     upper_tol: "+0.02".to_string(),
                     lower_tol: "-0.00".to_string(),

@@ -14,6 +14,7 @@ export interface Dimension {
   balloonNumber: number;
   dimensionType: string;
   name: string;
+  quantity: number;
   nominal: string;
   upperTol: string;
   lowerTol: string;

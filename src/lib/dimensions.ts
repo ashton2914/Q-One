@@ -25,6 +25,7 @@ export function createDimension(existing: readonly Dimension[]): Dimension {
     balloonNumber: nextBalloonNumber(existing),
     dimensionType: "",
     name: "",
+    quantity: 1,
     nominal: "",
     upperTol: "",
     lowerTol: "",

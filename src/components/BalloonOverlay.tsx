@@ -329,7 +329,9 @@ export function BalloonOverlay({
         const tooltip = [
           dim.dimensionType?.trim(),
           dim.name.trim() || "New Dimension",
-          dim.nominal ? `${dim.nominal}${tol ? ` ${tol}` : ""} ${dim.unit}` : "",
+          dim.nominal
+            ? `${dim.quantity > 1 ? `${dim.quantity}X ` : ""}${dim.nominal}${tol ? ` ${tol}` : ""} ${dim.unit}`
+            : "",
         ]
           .filter(Boolean)
           .join(" — ");

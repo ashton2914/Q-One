@@ -62,6 +62,19 @@ function InlineEditCard({
   const typeInputRef = useRef<HTMLInputElement | null>(null);
   const idInputRef = useRef<HTMLInputElement | null>(null);
   const [idError, setIdError] = useState<string | null>(null);
+  const [qtyText, setQtyText] = useState<string>(
+    dimension.quantity && dimension.quantity > 1
+      ? String(dimension.quantity)
+      : "",
+  );
+
+  useEffect(() => {
+    setQtyText(
+      dimension.quantity && dimension.quantity > 1
+        ? String(dimension.quantity)
+        : "",
+    );
+  }, [dimension.id]);
 
   // Derive known types strictly from active dimensions in the current project (excluding self)
   const knownTypes: string[] = [];
@@ -239,7 +252,31 @@ function InlineEditCard({
           <p className="text-[11px] text-rose-400">{idError}</p>
         )}
 
-        <div className="grid grid-cols-3 gap-1.5">
+        <div className="grid grid-cols-[54px_1fr_1fr_1fr] gap-1.5">
+          <div>
+            <label className="mb-1 block text-[11px] text-neutral-400">
+              Qty
+            </label>
+            <div className="flex items-center gap-0.5">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={qtyText}
+                placeholder="1"
+                onChange={(e) => {
+                  const digits = e.target.value.replace(/\D/g, "").slice(0, 3);
+                  setQtyText(digits);
+                  const parsed = digits ? Math.max(1, parseInt(digits, 10)) : 1;
+                  onUpdate(dimension.id, { quantity: parsed });
+                }}
+                className="w-full min-w-0 rounded border border-neutral-700 bg-neutral-950 px-1.5 py-1 text-center font-mono text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
+              />
+              <span className="shrink-0 font-mono text-[11px] font-semibold text-neutral-400">
+                X
+              </span>
+            </div>
+          </div>
+
           <div>
             <label className="mb-1 block text-[11px] text-neutral-400">
               Nominal
@@ -454,6 +491,7 @@ export function DimensionSidebar({
                           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-neutral-400">
                             {dim.nominal.trim() ? (
                               <span className="font-mono text-neutral-300">
+                                {dim.quantity > 1 ? `${dim.quantity}X ` : ""}
                                 {dim.nominal.trim()}
                                 {tol ? ` ${tol}` : ""} {dim.unit}
                               </span>
