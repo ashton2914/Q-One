@@ -124,9 +124,21 @@ const PdfPageItem = memo(function PdfPageItem({
   const detailCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const baseScaleRef = useRef<number>(0);
   const detailTileRef = useRef<DetailTileRect | null>(null);
+  const displayZoomRef = useRef<number>(displayZoom);
+  displayZoomRef.current = displayZoom;
   const [isVisible, setIsVisible] = useState<boolean>(pageNumber <= 2);
-  const [detailTile, setDetailTile] = useState<DetailTileRect | null>(null);
-  detailTileRef.current = detailTile;
+
+  // Keep detail canvas geometry in sync with displayZoom synchronously during zoom animations
+  useLayoutEffect(() => {
+    const target = detailCanvasRef.current;
+    const tile = detailTileRef.current;
+    if (!target || !tile) return;
+    const ratio = displayZoom / tile.zoom;
+    target.style.left = `${tile.x * ratio}px`;
+    target.style.top = `${tile.y * ratio}px`;
+    target.style.width = `${tile.width * ratio}px`;
+    target.style.height = `${tile.height * ratio}px`;
+  }, [displayZoom]);
 
   const width = Math.max(1, Math.round(baseSize.width * displayZoom));
   const height = Math.max(1, Math.round(baseSize.height * displayZoom));
@@ -164,10 +176,11 @@ const PdfPageItem = memo(function PdfPageItem({
       baseCanvas.height = 0;
       baseScaleRef.current = 0;
       if (detailCanvasRef.current) {
+        detailCanvasRef.current.style.opacity = "0";
         detailCanvasRef.current.width = 0;
         detailCanvasRef.current.height = 0;
       }
-      setDetailTile(null);
+      detailTileRef.current = null;
       return;
     }
 
@@ -263,9 +276,10 @@ const PdfPageItem = memo(function PdfPageItem({
 
     // If overview layer already covers full native resolution, no detail tile needed
     if (desiredScale <= overviewScale * 1.05) {
+      detailCanvas.style.opacity = "0";
       detailCanvas.width = 0;
       detailCanvas.height = 0;
-      setDetailTile(null);
+      detailTileRef.current = null;
       return;
     }
 
@@ -276,9 +290,10 @@ const PdfPageItem = memo(function PdfPageItem({
     const existing = detailTileRef.current;
     const tightCrop = computeVisiblePageCrop(pageRect, containerRect, 0);
     if (!tightCrop) {
+      detailCanvas.style.opacity = "0";
       detailCanvas.width = 0;
       detailCanvas.height = 0;
-      setDetailTile(null);
+      detailTileRef.current = null;
       return;
     }
     if (
@@ -294,9 +309,10 @@ const PdfPageItem = memo(function PdfPageItem({
 
     const crop = computeVisiblePageCrop(pageRect, containerRect, 200);
     if (!crop) {
+      detailCanvas.style.opacity = "0";
       detailCanvas.width = 0;
       detailCanvas.height = 0;
-      setDetailTile(null);
+      detailTileRef.current = null;
       return;
     }
 
@@ -342,13 +358,20 @@ const PdfPageItem = memo(function PdfPageItem({
         return task.promise.then(() => {
           if (cancelled || !detailCanvasRef.current || !offscreen) return;
           const target = detailCanvasRef.current;
+          const targetCtx = target.getContext("2d");
+          if (!targetCtx) return;
+
+          // Atomically update both canvas bitmap AND CSS position in the exact same frame
+          const ratio = displayZoomRef.current / renderZoom;
           target.width = offscreen.width;
           target.height = offscreen.height;
-          const targetCtx = target.getContext("2d");
-          if (targetCtx) {
-            targetCtx.drawImage(offscreen, 0, 0);
-            setDetailTile({ ...crop, zoom: renderZoom });
-          }
+          target.style.left = `${crop.x * ratio}px`;
+          target.style.top = `${crop.y * ratio}px`;
+          target.style.width = `${crop.width * ratio}px`;
+          target.style.height = `${crop.height * ratio}px`;
+          target.style.opacity = "1";
+          targetCtx.drawImage(offscreen, 0, 0);
+          detailTileRef.current = { ...crop, zoom: renderZoom };
         });
       })
       .catch((err: unknown) => {
@@ -386,8 +409,6 @@ const PdfPageItem = memo(function PdfPageItem({
     scrollContainer,
   ]);
 
-  const tileRatio = detailTile ? displayZoom / detailTile.zoom : 1;
-
   return (
     <div
       ref={setRefs}
@@ -397,17 +418,7 @@ const PdfPageItem = memo(function PdfPageItem({
       <canvas ref={baseCanvasRef} className="block h-full w-full" />
       <canvas
         ref={detailCanvasRef}
-        style={
-          detailTile
-            ? {
-                left: `${detailTile.x * tileRatio}px`,
-                top: `${detailTile.y * tileRatio}px`,
-                width: `${detailTile.width * tileRatio}px`,
-                height: `${detailTile.height * tileRatio}px`,
-                opacity: 1,
-              }
-            : { left: 0, top: 0, width: 0, height: 0, opacity: 0 }
-        }
+        style={{ left: 0, top: 0, width: 0, height: 0, opacity: 0 }}
         className="pointer-events-none absolute block"
       />
       {drawingId && (
