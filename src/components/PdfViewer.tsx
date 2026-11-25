@@ -543,11 +543,12 @@ export function PdfViewer({
     };
   }, [pageSizes.length, onPageChange]);
 
-  // Non-passive native wheel listener: smooth cursor-anchored zoom with gentle sensitivity
+  // Non-passive native wheel listener: Cmd/Ctrl + wheel zooms smoothly around cursor; plain wheel scrolls pages
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const handleWheel = (e: WheelEvent) => {
+      if (!e.metaKey && !e.ctrlKey) return;
       e.preventDefault();
       const rect = el.getBoundingClientRect();
       zoomAnchorRef.current = {
