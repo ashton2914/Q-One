@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
-import { FilePlus2, FolderOpen, FolderPlus, Network } from "lucide-react";
+import {
+  FilePlus2,
+  FolderOpen,
+  FolderPlus,
+  Network,
+  X,
+} from "lucide-react";
 import { ActivityBar } from "./components/ActivityBar";
 import { DimensionSidebar } from "./components/DimensionSidebar";
 import { DrawingListSidebar } from "./components/DrawingListSidebar";
@@ -1050,19 +1056,29 @@ export default function App() {
 
       {status && (
         <div
-          className={`flex items-center justify-between border-b px-4 py-1.5 text-xs ${
+          role="status"
+          aria-live="polite"
+          className={`fixed right-4 top-[84px] z-50 flex max-w-md items-center gap-2.5 rounded-lg border px-3 py-2 text-xs shadow-2xl backdrop-blur-md ${
             status.kind === "error"
-              ? "border-rose-500/40 bg-rose-950/90 text-rose-200"
-              : "border-emerald-500/30 bg-emerald-950/70 text-emerald-200"
+              ? "border-rose-500/40 bg-rose-950/95 text-rose-200"
+              : "border-emerald-500/35 bg-neutral-950/95 text-emerald-200"
           }`}
         >
-          <span>{status.text}</span>
+          <span
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+              status.kind === "error" ? "bg-rose-400" : "bg-emerald-400"
+            }`}
+          />
+          <span className="min-w-0 flex-1 break-words leading-snug">
+            {status.text}
+          </span>
           <button
             type="button"
+            aria-label="Dismiss notification"
             onClick={() => setStatus(null)}
-            className="ml-4 text-[11px] opacity-75 hover:opacity-100"
+            className="shrink-0 rounded p-0.5 text-neutral-400 transition-colors hover:bg-white/10 hover:text-white"
           >
-            Dismiss
+            <X className="h-3.5 w-3.5" />
           </button>
         </div>
       )}
