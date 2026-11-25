@@ -4,6 +4,7 @@ import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import { FilePlus2, FolderOpen, FolderPlus, Network } from "lucide-react";
 import { ActivityBar } from "./components/ActivityBar";
 import { DimensionSidebar } from "./components/DimensionSidebar";
+import { DrawingListSidebar } from "./components/DrawingListSidebar";
 import { MenuBar } from "./components/MenuBar";
 import {
   PdfViewer,
@@ -41,6 +42,7 @@ import {
 import type {
   ActiveModule,
   Dimension,
+  DrawingEntry,
   MarkerPosition,
   Part,
   ProjectData,
@@ -57,6 +59,9 @@ export default function App() {
   const [projectFilePath, setProjectFilePath] = useState<string | null>(null);
   const [selectedPartId, setSelectedPartId] = useState<string | null>(null);
   const [activePartId, setActivePartId] = useState<string | null>(null);
+  const [drawingSidebarView, setDrawingSidebarView] = useState<
+    "drawings" | "dimensions"
+  >("drawings");
 
   const [activeDrawingId, setActiveDrawingId] = useState<string | null>(null);
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
@@ -99,6 +104,26 @@ export default function App() {
     () => project?.parts.find((p) => p.id === activePartId) ?? null,
     [project, activePartId],
   );
+
+  const activePartDrawings = useMemo<DrawingEntry[]>(() => {
+    if (!project || !activePart) return [];
+    const byId = new Map(project.drawings.map((d) => [d.id, d]));
+    return activePart.drawingIds
+      .map((id) => byId.get(id))
+      .filter((d): d is DrawingEntry => Boolean(d));
+  }, [project, activePart]);
+
+  const dimCountByDrawing = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!project) return map;
+    for (const dim of project.dimensions) {
+      const id = dim.drawingId ?? dim.marker?.drawingId ?? null;
+      if (id) {
+        map.set(id, (map.get(id) ?? 0) + 1);
+      }
+    }
+    return map;
+  }, [project]);
 
   const activeDrawing = useMemo(
     () => project?.drawings.find((d) => d.id === activeDrawingId) ?? null,
@@ -160,6 +185,7 @@ export default function App() {
     setProjectFilePath(null);
     setSelectedPartId(null);
     setActivePartId(null);
+    setDrawingSidebarView("drawings");
     setActiveDrawingId(null);
     setPdfBytes(null);
     setCurrentPage(1);
@@ -198,6 +224,7 @@ export default function App() {
       const firstPartId = nextProject.parts[0]?.id ?? null;
       setSelectedPartId(firstPartId);
       setActivePartId(firstPartId);
+      setDrawingSidebarView("dimensions");
       setActiveDrawingId(imported.drawingId);
       setPdfBytes(imported.pdfBytes);
       setCurrentPage(1);
@@ -231,6 +258,7 @@ export default function App() {
       const initialPartId = ownerPart?.id ?? normalized.parts[0]?.id ?? null;
       setSelectedPartId(initialPartId);
       setActivePartId(initialPartId);
+      setDrawingSidebarView(opened.activeDrawingId ? "dimensions" : "drawings");
       setActiveDrawingId(opened.activeDrawingId);
       setPdfBytes(opened.pdfBytes);
       setCurrentPage(1);
@@ -343,6 +371,7 @@ export default function App() {
     setProjectFilePath(null);
     setSelectedPartId(null);
     setActivePartId(null);
+    setDrawingSidebarView("drawings");
     setActiveDrawingId(null);
     setPdfBytes(null);
     setCurrentPage(1);
@@ -492,7 +521,7 @@ export default function App() {
             ),
           };
         });
-        if (activePartId === partId && !activeDrawingId) {
+        if (activePartId === partId) {
           drawingLoadSeqRef.current += 1;
           setActiveDrawingId(imported.drawingId);
           setPdfBytes(imported.pdfBytes);
@@ -507,7 +536,7 @@ export default function App() {
         showStatus("error", err instanceof Error ? err.message : String(err));
       }
     },
-    [project, activePartId, activeDrawingId, markDirty, showStatus],
+    [project, activePartId, markDirty, showStatus],
   );
 
   const handleDetachPdf = useCallback(
@@ -569,6 +598,7 @@ export default function App() {
         } else {
           setActiveDrawingId(null);
           setPdfBytes(null);
+          setDrawingSidebarView("drawings");
           setSelectedDimensionId(null);
           setEditingDimensionId(null);
           setPlacingDimensionId(null);
@@ -621,6 +651,7 @@ export default function App() {
       }
       setActivePartId(partId);
       setSelectedPartId(partId);
+      setDrawingSidebarView("drawings");
 
       const partLabel = part.name.trim() || "Untitled Part";
       if (part.drawingIds.length === 0) {
@@ -691,6 +722,7 @@ export default function App() {
           setPlacingDimensionId(null);
           setFitRequestKey((k) => k + 1);
         }
+        setDrawingSidebarView("dimensions");
         setActiveModule("drawing");
       } catch (err) {
         showStatus("error", err instanceof Error ? err.message : String(err));
@@ -1053,23 +1085,47 @@ export default function App() {
         ) : (
           <div className="flex min-h-0 min-w-0 flex-1">
             <aside className="flex w-80 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950">
-              <DimensionSidebar
-                dimensions={activeDrawingDimensions}
-                selectedDimensionId={selectedDimensionId}
-                editingDimensionId={editingDimensionId}
-                placingDimensionId={placingDimensionId}
-                focusNameKey={focusNameKey}
-                hasProject={activeDrawingId !== null}
-                onAddDimension={handleAddDimension}
-                onSelectDimension={handleSelectFromSidebar}
-                onStartEditing={handleStartEditing}
-                onFinishEditing={handleFinishEditing}
-                onCancelEditing={handleCancelEditing}
-                onUpdateDimension={handleUpdateDimension}
-                onDeleteDimension={handleDeleteDimension}
-                onStartPlacing={setPlacingDimensionId}
-                onClearMarker={handleClearMarker}
-              />
+              {drawingSidebarView === "dimensions" && activeDrawing ? (
+                <DimensionSidebar
+                  dimensions={activeDrawingDimensions}
+                  selectedDimensionId={selectedDimensionId}
+                  editingDimensionId={editingDimensionId}
+                  placingDimensionId={placingDimensionId}
+                  focusNameKey={focusNameKey}
+                  hasProject={activeDrawingId !== null}
+                  activeDrawingFilename={activeDrawing.filename}
+                  onBackToDrawings={() => {
+                    if (editingDimensionId) {
+                      handleCancelEditing();
+                    }
+                    setDrawingSidebarView("drawings");
+                  }}
+                  onAddDimension={handleAddDimension}
+                  onSelectDimension={handleSelectFromSidebar}
+                  onStartEditing={handleStartEditing}
+                  onFinishEditing={handleFinishEditing}
+                  onCancelEditing={handleCancelEditing}
+                  onUpdateDimension={handleUpdateDimension}
+                  onDeleteDimension={handleDeleteDimension}
+                  onStartPlacing={setPlacingDimensionId}
+                  onClearMarker={handleClearMarker}
+                />
+              ) : (
+                <DrawingListSidebar
+                  activePart={activePart}
+                  drawings={activePartDrawings}
+                  activeDrawingId={activeDrawingId}
+                  dimCountByDrawing={dimCountByDrawing}
+                  onUploadPdf={() => {
+                    if (activePart) void handleAttachPdf(activePart.id);
+                  }}
+                  onSelectDrawing={(drwId) => void handleOpenDrawing(drwId)}
+                  onRemoveDrawing={(drwId) => {
+                    if (activePart) void handleDetachPdf(activePart.id, drwId);
+                  }}
+                  onGoToProject={() => setActiveModule("project")}
+                />
+              )}
             </aside>
 
             {activeDrawing && pdfBytes ? (

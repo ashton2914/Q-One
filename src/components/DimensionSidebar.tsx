@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Check,
+  ChevronLeft,
   Crosshair,
   MapPin,
   MapPinOff,
@@ -23,6 +24,8 @@ export interface DimensionSidebarProps {
   placingDimensionId: string | null;
   focusNameKey: number;
   hasProject: boolean;
+  activeDrawingFilename?: string | null;
+  onBackToDrawings?: () => void;
   onAddDimension: () => void;
   onSelectDimension: (id: string) => void;
   onStartEditing: (id: string) => void;
@@ -383,6 +386,8 @@ export function DimensionSidebar({
   placingDimensionId,
   focusNameKey,
   hasProject,
+  activeDrawingFilename,
+  onBackToDrawings,
   onAddDimension,
   onSelectDimension,
   onStartEditing,
@@ -395,6 +400,27 @@ export function DimensionSidebar({
 }: DimensionSidebarProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {onBackToDrawings && (
+        <div className="flex items-center justify-between gap-2 border-b border-neutral-800 bg-neutral-900/70 px-2.5 py-1.5">
+          <button
+            type="button"
+            onClick={onBackToDrawings}
+            className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-neutral-300 hover:bg-neutral-800 hover:text-white"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+            Drawings
+          </button>
+          {activeDrawingFilename && (
+            <span
+              title={activeDrawingFilename}
+              className="truncate font-mono text-[10px] text-neutral-400"
+            >
+              {activeDrawingFilename}
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="flex items-center justify-between border-b border-neutral-800 px-3 py-2.5">
         <div className="flex items-center gap-2">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
