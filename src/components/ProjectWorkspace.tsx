@@ -44,6 +44,30 @@ interface PanState {
   startScrollTop: number;
 }
 
+type PointerDragState =
+  | {
+      kind: "card";
+      partId: string;
+      startClientX: number;
+      startClientY: number;
+      clientX: number;
+      clientY: number;
+      active: boolean;
+    }
+  | {
+      kind: "wire";
+      /** "from-parent": dragging from right port of parent -> drop on child.
+       *  "from-child": dragging from left port of child -> drop on parent (or empty canvas to detach). */
+      direction: "from-parent" | "from-child";
+      sourcePartId: string;
+      originCanvasX: number;
+      originCanvasY: number;
+      cursorCanvasX: number;
+      cursorCanvasY: number;
+    };
+
+const CARD_DRAG_THRESHOLD_PX = 6;
+
 export function ProjectWorkspace({
   project,
   selectedPartId,
@@ -58,6 +82,8 @@ export function ProjectWorkspace({
   onOpenDrawing,
 }: ProjectWorkspaceProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const canvasInnerRef = useRef<HTMLDivElement | null>(null);
+  const rootDropZoneRef = useRef<HTMLDivElement | null>(null);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const panRef = useRef<PanState | null>(null);
 
@@ -67,10 +93,10 @@ export function ProjectWorkspace({
 
   const [isPanning, setIsPanning] = useState<boolean>(false);
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
-  const [draggingPartId, setDraggingPartId] = useState<string | null>(null);
-  const [dropTargetId, setDropTargetId] = useState<string | "__root__" | null>(
-    null,
-  );
+  const [pointerDrag, setPointerDrag] = useState<PointerDragState | null>(null);
+  const [hoveredTargetId, setHoveredTargetId] = useState<
+    string | "__root__" | null
+  >(null);
 
   const drawingsById = useMemo(
     () => new Map<string, DrawingEntry>(project.drawings.map((d) => [d.id, d])),
@@ -114,6 +140,194 @@ export function ProjectWorkspace({
     return () => el.removeEventListener("wheel", handleWheel);
   }, []);
 
+  // Global pointer tracking for reliable card drag-to-reparent & live Bézier wire connecting
+  const pointerDragRef = useRef<PointerDragState | null>(null);
+  pointerDragRef.current = pointerDrag;
+  const partsRef = useRef<Part[]>(project.parts);
+  partsRef.current = project.parts;
+
+  const clientToCanvasPoint = (clientX: number, clientY: number) => {
+    const inner = canvasInnerRef.current;
+    if (!inner) return { x: 0, y: 0 };
+    const rect = inner.getBoundingClientRect();
+    return {
+      x: (clientX - rect.left) / zoomRef.current,
+      y: (clientY - rect.top) / zoomRef.current,
+    };
+  };
+
+  const findPartIdAtClientPoint = (
+    clientX: number,
+    clientY: number,
+  ): string | null => {
+    const elements = document.elementsFromPoint(clientX, clientY);
+    for (const el of elements) {
+      const card = (el as HTMLElement).closest?.(
+        "[data-part-card-id]",
+      ) as HTMLElement | null;
+      if (card) {
+        return card.dataset.partCardId ?? null;
+      }
+    }
+    return null;
+  };
+
+  const isOverRootZone = (clientX: number, clientY: number): boolean => {
+    const zone = rootDropZoneRef.current;
+    if (!zone) return false;
+    const rect = zone.getBoundingClientRect();
+    return (
+      clientX >= rect.left &&
+      clientX <= rect.right &&
+      clientY >= rect.top &&
+      clientY <= rect.bottom
+    );
+  };
+
+  useEffect(() => {
+    if (!pointerDrag) return;
+
+    const handleMove = (e: PointerEvent) => {
+      const current = pointerDragRef.current;
+      if (!current) return;
+
+      if (current.kind === "card") {
+        const active =
+          current.active ||
+          Math.hypot(
+            e.clientX - current.startClientX,
+            e.clientY - current.startClientY,
+          ) >= CARD_DRAG_THRESHOLD_PX;
+        setPointerDrag({
+          ...current,
+          clientX: e.clientX,
+          clientY: e.clientY,
+          active,
+        });
+        if (!active) return;
+
+        if (isOverRootZone(e.clientX, e.clientY)) {
+          setHoveredTargetId("__root__");
+          return;
+        }
+        const hitId = findPartIdAtClientPoint(e.clientX, e.clientY);
+        if (
+          hitId &&
+          hitId !== current.partId &&
+          canReparentPart(partsRef.current, current.partId, hitId)
+        ) {
+          setHoveredTargetId(hitId);
+        } else {
+          setHoveredTargetId(null);
+        }
+      } else {
+        const pt = clientToCanvasPoint(e.clientX, e.clientY);
+        setPointerDrag({
+          ...current,
+          cursorCanvasX: pt.x,
+          cursorCanvasY: pt.y,
+        });
+        const hitId = findPartIdAtClientPoint(e.clientX, e.clientY);
+        if (!hitId || hitId === current.sourcePartId) {
+          setHoveredTargetId(null);
+          return;
+        }
+        const valid =
+          current.direction === "from-parent"
+            ? canReparentPart(partsRef.current, hitId, current.sourcePartId)
+            : canReparentPart(partsRef.current, current.sourcePartId, hitId);
+        setHoveredTargetId(valid ? hitId : null);
+      }
+    };
+
+    const handleUp = (e: PointerEvent) => {
+      const current = pointerDragRef.current;
+      if (!current) return;
+
+      if (current.kind === "card") {
+        if (!current.active) {
+          onSelectPart(current.partId);
+        } else if (isOverRootZone(e.clientX, e.clientY)) {
+          const src = partsRef.current.find((p) => p.id === current.partId);
+          if (src && src.parentId !== null) {
+            onReparentPart(current.partId, null);
+          }
+        } else {
+          const hitId = findPartIdAtClientPoint(e.clientX, e.clientY);
+          const src = partsRef.current.find((p) => p.id === current.partId);
+          if (
+            hitId &&
+            src &&
+            src.parentId !== hitId &&
+            canReparentPart(partsRef.current, current.partId, hitId)
+          ) {
+            onReparentPart(current.partId, hitId);
+            setCollapsedIds((prev) => {
+              if (!prev.has(hitId)) return prev;
+              const next = new Set(prev);
+              next.delete(hitId);
+              return next;
+            });
+          }
+        }
+      } else {
+        const hitId = findPartIdAtClientPoint(e.clientX, e.clientY);
+        if (current.direction === "from-parent") {
+          if (
+            hitId &&
+            hitId !== current.sourcePartId &&
+            canReparentPart(partsRef.current, hitId, current.sourcePartId)
+          ) {
+            const child = partsRef.current.find((p) => p.id === hitId);
+            if (child && child.parentId !== current.sourcePartId) {
+              onReparentPart(hitId, current.sourcePartId);
+              setCollapsedIds((prev) => {
+                if (!prev.has(current.sourcePartId)) return prev;
+                const next = new Set(prev);
+                next.delete(current.sourcePartId);
+                return next;
+              });
+            }
+          }
+        } else {
+          // from-child: drop on a target part -> nest under it; drop on empty canvas -> promote to root
+          const src = partsRef.current.find(
+            (p) => p.id === current.sourcePartId,
+          );
+          if (
+            hitId &&
+            hitId !== current.sourcePartId &&
+            canReparentPart(partsRef.current, current.sourcePartId, hitId)
+          ) {
+            if (src && src.parentId !== hitId) {
+              onReparentPart(current.sourcePartId, hitId);
+              setCollapsedIds((prev) => {
+                if (!prev.has(hitId)) return prev;
+                const next = new Set(prev);
+                next.delete(hitId);
+                return next;
+              });
+            }
+          } else if (!hitId && src && src.parentId !== null) {
+            onReparentPart(current.sourcePartId, null);
+          }
+        }
+      }
+
+      setPointerDrag(null);
+      setHoveredTargetId(null);
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", handleUp);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleUp);
+    };
+  }, [pointerDrag !== null, onReparentPart, onSelectPart]);
+
   const toggleCollapse = (partId: string) => {
     setCollapsedIds((prev) => {
       const next = new Set(prev);
@@ -143,7 +357,7 @@ export function ProjectWorkspace({
   const handleCanvasPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 || !viewportRef.current) return;
     const target = e.target as HTMLElement;
-    if (target.closest("[data-part-card='true']")) return;
+    if (target.closest("[data-part-card-id]")) return;
     const el = viewportRef.current;
     el.setPointerCapture(e.pointerId);
     panRef.current = {
@@ -160,8 +374,14 @@ export function ProjectWorkspace({
     const pan = panRef.current;
     const el = viewportRef.current;
     if (!pan || !el || pan.pointerId !== e.pointerId) return;
-    el.scrollLeft = Math.max(0, pan.startScrollLeft - (e.clientX - pan.startClientX));
-    el.scrollTop = Math.max(0, pan.startScrollTop - (e.clientY - pan.startClientY));
+    el.scrollLeft = Math.max(
+      0,
+      pan.startScrollLeft - (e.clientX - pan.startClientX),
+    );
+    el.scrollTop = Math.max(
+      0,
+      pan.startScrollTop - (e.clientY - pan.startClientY),
+    );
   };
 
   const stopCanvasPan = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -174,57 +394,51 @@ export function ProjectWorkspace({
     setIsPanning(false);
   };
 
-  const handleDragStart = (e: React.DragEvent, partId: string) => {
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", partId);
-    setDraggingPartId(partId);
-  };
-
-  const handleDragEnd = () => {
-    setDraggingPartId(null);
-    setDropTargetId(null);
-  };
-
-  const handleCardDragOver = (e: React.DragEvent, targetPartId: string) => {
-    if (!draggingPartId) return;
-    if (!canReparentPart(project.parts, draggingPartId, targetPartId)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    if (dropTargetId !== targetPartId) {
-      setDropTargetId(targetPartId);
-    }
-  };
-
-  const handleCardDrop = (e: React.DragEvent, targetPartId: string) => {
-    e.preventDefault();
+  const startCardDrag = (
+    e: React.PointerEvent<HTMLDivElement>,
+    partId: string,
+  ) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("button") || target.closest("[data-port='true']")) return;
     e.stopPropagation();
-    const sourceId = draggingPartId || e.dataTransfer.getData("text/plain");
-    if (sourceId && canReparentPart(project.parts, sourceId, targetPartId)) {
-      onReparentPart(sourceId, targetPartId);
-      setCollapsedIds((prev) => {
-        if (!prev.has(targetPartId)) return prev;
-        const next = new Set(prev);
-        next.delete(targetPartId);
-        return next;
-      });
-    }
-    setDraggingPartId(null);
-    setDropTargetId(null);
+    setPointerDrag({
+      kind: "card",
+      partId,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      clientX: e.clientX,
+      clientY: e.clientY,
+      active: false,
+    });
   };
 
-  const handleRootDrop = (e: React.DragEvent) => {
+  const startWireDrag = (
+    e: React.PointerEvent<HTMLButtonElement>,
+    direction: "from-parent" | "from-child",
+    partId: string,
+    originCanvasX: number,
+    originCanvasY: number,
+  ) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
     e.preventDefault();
-    const sourceId = draggingPartId || e.dataTransfer.getData("text/plain");
-    if (sourceId) {
-      onReparentPart(sourceId, null);
-    }
-    setDraggingPartId(null);
-    setDropTargetId(null);
+    const pt = clientToCanvasPoint(e.clientX, e.clientY);
+    setPointerDrag({
+      kind: "wire",
+      direction,
+      sourcePartId: partId,
+      originCanvasX,
+      originCanvasY,
+      cursorCanvasX: pt.x,
+      cursorCanvasY: pt.y,
+    });
   };
 
-  const draggingPart = draggingPartId
-    ? project.parts.find((p) => p.id === draggingPartId) ?? null
-    : null;
+  const activeDraggingCardPart =
+    pointerDrag?.kind === "card" && pointerDrag.active
+      ? project.parts.find((p) => p.id === pointerDrag.partId) ?? null
+      : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-neutral-900">
@@ -249,7 +463,8 @@ export function ProjectWorkspace({
           </button>
 
           <span className="hidden text-[11px] text-neutral-500 sm:inline">
-            {project.parts.length} {project.parts.length === 1 ? "part" : "parts"} ·{" "}
+            {project.parts.length}{" "}
+            {project.parts.length === 1 ? "part" : "parts"} ·{" "}
             {project.drawings.length}{" "}
             {project.drawings.length === 1 ? "drawing" : "drawings"} ·{" "}
             {project.dimensions.length}{" "}
@@ -298,25 +513,26 @@ export function ProjectWorkspace({
       {/* Main Split: Interactive Node Tree Canvas + Right Part Inspector Drawer */}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-          {draggingPart && draggingPart.parentId !== null && (
-            <div
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = "move";
-                setDropTargetId("__root__");
-              }}
-              onDragLeave={() => {
-                if (dropTargetId === "__root__") setDropTargetId(null);
-              }}
-              onDrop={handleRootDrop}
-              className={`z-30 flex items-center justify-center gap-2 border-b px-4 py-2 text-xs font-medium transition-colors ${
-                dropTargetId === "__root__"
-                  ? "border-blue-500 bg-blue-600/25 text-blue-100"
-                  : "border-neutral-700 bg-neutral-950/90 text-neutral-300"
-              }`}
-            >
-              <ArrowUpToLine className="h-3.5 w-3.5" />
-              Drop "{draggingPart.name}" here to promote to top-level Root Part
+          {activeDraggingCardPart &&
+            activeDraggingCardPart.parentId !== null && (
+              <div
+                ref={rootDropZoneRef}
+                className={`absolute left-1/2 top-3 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-medium shadow-xl transition-colors ${
+                  hoveredTargetId === "__root__"
+                    ? "border-blue-400 bg-blue-600/90 text-white"
+                    : "border-neutral-700 bg-neutral-950/95 text-neutral-300"
+                }`}
+              >
+                <ArrowUpToLine className="h-3.5 w-3.5" />
+                Drop here to promote "{activeDraggingCardPart.name}" to Root Part
+              </div>
+            )}
+
+          {pointerDrag?.kind === "wire" && (
+            <div className="pointer-events-none absolute left-1/2 top-3 z-40 -translate-x-1/2 rounded-full border border-blue-500/50 bg-neutral-950/95 px-3.5 py-1 text-[11px] text-blue-200 shadow-xl">
+              {pointerDrag.direction === "from-parent"
+                ? "Drop wire onto a Part card to attach it as a Sub-part"
+                : "Drop wire onto a Parent Part card (or empty space to detach to Root)"}
             </div>
           )}
 
@@ -332,7 +548,11 @@ export function ProjectWorkspace({
               backgroundSize: "24px 24px",
             }}
             className={`relative flex-1 overflow-auto ${
-              isPanning ? "cursor-grabbing" : "cursor-grab"
+              pointerDrag?.kind === "wire"
+                ? "cursor-crosshair"
+                : isPanning || activeDraggingCardPart
+                  ? "cursor-grabbing"
+                  : "cursor-grab"
             }`}
           >
             {project.parts.length === 0 ? (
@@ -345,10 +565,9 @@ export function ProjectWorkspace({
                     Start Your Assembly BOM
                   </h2>
                   <p className="mt-1.5 text-xs leading-relaxed text-neutral-400">
-                    Add your first part, nest sub-parts by clicking{" "}
-                    <span className="font-medium text-neutral-200">+ Sub-part</span>{" "}
-                    or dragging cards onto each other, and attach PDF drawings to
-                    any part.
+                    Add parts, drag cards onto each other or drag connection
+                    wires between ports to build sub-part hierarchies, and attach
+                    PDF drawings.
                   </p>
                   <button
                     type="button"
@@ -363,25 +582,26 @@ export function ProjectWorkspace({
             ) : (
               <div
                 style={{
-                  width: Math.max(layout.width * zoom, 600),
-                  height: Math.max(layout.height * zoom, 420),
+                  width: Math.max(layout.width * zoom, 720),
+                  height: Math.max(layout.height * zoom, 480),
                 }}
                 className="relative"
               >
                 <div
+                  ref={canvasInnerRef}
                   style={{
-                    width: layout.width,
-                    height: layout.height,
+                    width: Math.max(layout.width, 720),
+                    height: Math.max(layout.height, 480),
                     transform: `scale(${zoom})`,
                     transformOrigin: "0 0",
                   }}
                   className="relative"
                 >
-                  {/* SVG Cubic Bézier Edges */}
+                  {/* SVG Cubic Bézier Edges + Live Wire Preview */}
                   <svg
-                    width={layout.width}
-                    height={layout.height}
-                    className="pointer-events-none absolute inset-0"
+                    width={Math.max(layout.width, 720)}
+                    height={Math.max(layout.height, 480)}
+                    className="pointer-events-none absolute inset-0 overflow-visible"
                   >
                     {layout.edges.map((edge) => {
                       const midX = (edge.x1 + edge.x2) / 2;
@@ -399,6 +619,36 @@ export function ProjectWorkspace({
                         />
                       );
                     })}
+
+                    {pointerDrag?.kind === "wire" &&
+                      (() => {
+                        const x1 = pointerDrag.originCanvasX;
+                        const y1 = pointerDrag.originCanvasY;
+                        const x2 = pointerDrag.cursorCanvasX;
+                        const y2 = pointerDrag.cursorCanvasY;
+                        const dx = Math.max(48, Math.abs(x2 - x1) * 0.5);
+                        const c1x =
+                          pointerDrag.direction === "from-parent"
+                            ? x1 + dx
+                            : x1 - dx;
+                        const c2x =
+                          pointerDrag.direction === "from-parent"
+                            ? x2 - dx
+                            : x2 + dx;
+                        const d = `M ${x1} ${y1} C ${c1x} ${y1}, ${c2x} ${y2}, ${x2} ${y2}`;
+                        return (
+                          <g>
+                            <path
+                              d={d}
+                              fill="none"
+                              stroke="#3b82f6"
+                              strokeWidth={2}
+                              strokeDasharray="6 4"
+                            />
+                            <circle cx={x2} cy={y2} r={4} fill="#60a5fa" />
+                          </g>
+                        );
+                      })()}
                   </svg>
 
                   {/* Interactive Part Cards */}
@@ -406,8 +656,11 @@ export function ProjectWorkspace({
                     const { part } = node;
                     const isSelected = part.id === selectedPartId;
                     const isCollapsed = collapsedIds.has(part.id);
-                    const isDropTarget = dropTargetId === part.id;
-                    const isDraggingThis = draggingPartId === part.id;
+                    const isDropTarget = hoveredTargetId === part.id;
+                    const isDraggingThis =
+                      pointerDrag?.kind === "card" &&
+                      pointerDrag.active &&
+                      pointerDrag.partId === part.id;
                     const attachedDrawings = part.drawingIds
                       .map((id) => drawingsById.get(id))
                       .filter((d): d is DrawingEntry => Boolean(d));
@@ -416,36 +669,71 @@ export function ProjectWorkspace({
                       0,
                     );
 
+                    const leftPortX = node.x;
+                    const rightPortX = node.x + PART_CARD_WIDTH;
+                    const portY = node.y + PART_CARD_HEIGHT / 2;
+
                     return (
                       <div
                         key={part.id}
-                        data-part-card="true"
-                        draggable
-                        onDragStart={(e) => handleDragStart(e, part.id)}
-                        onDragEnd={handleDragEnd}
-                        onDragOver={(e) => handleCardDragOver(e, part.id)}
-                        onDragLeave={() => {
-                          if (dropTargetId === part.id) setDropTargetId(null);
-                        }}
-                        onDrop={(e) => handleCardDrop(e, part.id)}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onSelectPart(part.id);
-                        }}
+                        data-part-card-id={part.id}
+                        onPointerDown={(e) => startCardDrag(e, part.id)}
                         style={{
                           left: node.x,
                           top: node.y,
                           width: PART_CARD_WIDTH,
                           height: PART_CARD_HEIGHT,
                         }}
-                        className={`group absolute flex cursor-pointer flex-col justify-between rounded-lg border p-2.5 shadow-lg transition-all select-none ${
+                        className={`group absolute flex cursor-grab flex-col justify-between rounded-lg border p-2.5 shadow-lg transition-shadow select-none ${
                           isDropTarget
-                            ? "border-blue-400 bg-blue-950/50 ring-2 ring-blue-500/60"
+                            ? "border-blue-400 bg-blue-950/50 ring-2 ring-blue-500/70"
                             : isSelected
                               ? "border-neutral-400 bg-neutral-900 ring-2 ring-blue-500/40"
                               : "border-neutral-700/90 bg-neutral-950/95 hover:border-neutral-500"
-                        } ${isDraggingThis ? "opacity-45" : ""}`}
+                        } ${isDraggingThis ? "opacity-40" : ""}`}
                       >
+                        {/* Left Port (Child / Parent-link input) */}
+                        <button
+                          type="button"
+                          data-port="true"
+                          title="Drag wire to attach under a Parent Part (or drop on empty space to detach)"
+                          onPointerDown={(e) =>
+                            startWireDrag(
+                              e,
+                              "from-child",
+                              part.id,
+                              leftPortX,
+                              portY,
+                            )
+                          }
+                          className={`absolute -left-2 top-1/2 z-20 h-3.5 w-3.5 -translate-y-1/2 cursor-crosshair rounded-full border-2 transition-transform hover:scale-125 ${
+                            part.parentId
+                              ? "border-blue-400 bg-neutral-950"
+                              : "border-neutral-500 bg-neutral-900 opacity-75 group-hover:opacity-100"
+                          }`}
+                        />
+
+                        {/* Right Port (Parent / Sub-part output) */}
+                        <button
+                          type="button"
+                          data-port="true"
+                          title="Drag wire onto another Part to make it a Sub-part"
+                          onPointerDown={(e) =>
+                            startWireDrag(
+                              e,
+                              "from-parent",
+                              part.id,
+                              rightPortX,
+                              portY,
+                            )
+                          }
+                          className={`absolute -right-2 top-1/2 z-20 h-3.5 w-3.5 -translate-y-1/2 cursor-crosshair rounded-full border-2 transition-transform hover:scale-125 ${
+                            node.hasChildren
+                              ? "border-blue-400 bg-blue-500"
+                              : "border-neutral-500 bg-neutral-900 opacity-75 group-hover:opacity-100"
+                          }`}
+                        />
+
                         {/* Header row */}
                         <div className="flex items-start justify-between gap-1.5">
                           <div className="min-w-0 flex-1">
@@ -458,7 +746,7 @@ export function ProjectWorkspace({
                             <div className="mt-0.5 truncate font-mono text-[10px] text-neutral-400">
                               {[part.partNumber.trim(), part.revision.trim()]
                                 .filter(Boolean)
-                                .join(" · ") || "Drag onto another part to nest"}
+                                .join(" · ") || "Drag card or port wire to connect"}
                             </div>
                           </div>
 
@@ -508,7 +796,9 @@ export function ProjectWorkspace({
                                   className="inline-flex max-w-[110px] items-center gap-1 rounded bg-neutral-800/90 px-1.5 py-0.5 text-[10px] text-neutral-200 ring-1 ring-neutral-700 hover:bg-blue-600/30 hover:text-white hover:ring-blue-500/60"
                                 >
                                   <FileText className="h-2.5 w-2.5 shrink-0 text-emerald-400" />
-                                  <span className="truncate">{drw.filename}</span>
+                                  <span className="truncate">
+                                    {drw.filename}
+                                  </span>
                                 </button>
                               ))}
                               {attachedDrawings.length > 2 && (
@@ -566,6 +856,22 @@ export function ProjectWorkspace({
               </div>
             )}
           </div>
+
+          {/* Floating Ghost Preview while dragging a Part card */}
+          {pointerDrag?.kind === "card" &&
+            pointerDrag.active &&
+            activeDraggingCardPart && (
+              <div
+                style={{
+                  left: pointerDrag.clientX + 12,
+                  top: pointerDrag.clientY + 12,
+                }}
+                className="pointer-events-none fixed z-50 flex items-center gap-2 rounded-md border border-blue-400/80 bg-neutral-900/95 px-3 py-1.5 text-xs font-medium text-neutral-100 shadow-2xl"
+              >
+                <Box className="h-3.5 w-3.5 text-blue-400" />
+                <span>{activeDraggingCardPart.name.trim() || "Part"}</span>
+              </div>
+            )}
         </div>
 
         {/* Right Part Inspector Drawer */}
@@ -691,7 +997,8 @@ export function ProjectWorkspace({
                               <div className="mt-0.5 text-[10px] text-neutral-500">
                                 {drw.pageCount}{" "}
                                 {drw.pageCount === 1 ? "page" : "pages"} ·{" "}
-                                {count} {count === 1 ? "dimension" : "dimensions"}
+                                {count}{" "}
+                                {count === 1 ? "dimension" : "dimensions"}
                               </div>
                             </div>
 
@@ -736,7 +1043,15 @@ export function ProjectWorkspace({
 
                 <button
                   type="button"
-                  onClick={() => onAddPart(selectedPart.id)}
+                  onClick={() => {
+                    setCollapsedIds((prev) => {
+                      if (!prev.has(selectedPart.id)) return prev;
+                      const next = new Set(prev);
+                      next.delete(selectedPart.id);
+                      return next;
+                    });
+                    onAddPart(selectedPart.id);
+                  }}
                   className="inline-flex items-center gap-1.5 rounded bg-neutral-800 px-3 py-1.5 text-xs font-medium text-neutral-100 hover:bg-neutral-700"
                 >
                   <GitBranchPlus className="h-3.5 w-3.5" />
