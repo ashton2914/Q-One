@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createDimension,
   createProjectFromPdf,
+  duplicateDimension,
   findTypeCompletion,
   formatTolerance,
   nextBalloonNumber,
@@ -207,5 +208,31 @@ describe("dimensions", () => {
     expect(sanitized.diameterZone).toBe(false);
     expect(sanitized.materialCondition).toBe("");
     expect(sanitized.datums.every((d) => d.datum === "" && d.materialCondition === "")).toBe(true);
+  });
+
+  it("duplicates annotations with deep-cloned specs, cleared marker, and auto-incremented IDs", () => {
+    const p1: Dimension = {
+      ...createDimension([], "d-1"),
+      id: "p-1",
+      kind: "point",
+      name: "P1",
+      point: { x: "10", y: "20", z: "0", datums: ["A", "B", ""] },
+      marker: { drawingId: "d-1", page: 1, x: 0.5, y: 0.5, width: 0, height: 0 },
+    };
+    const dup = duplicateDimension(p1, [p1]);
+    expect(dup.id).not.toBe(p1.id);
+    expect(dup.name).toBe("P2");
+    expect(dup.marker).toBeNull();
+    expect(dup.point).toEqual(p1.point);
+    expect(dup.point).not.toBe(p1.point);
+
+    const datumA: Dimension = {
+      ...createDimension([], "d-1"),
+      id: "dat-a",
+      kind: "datum",
+      name: "A",
+    };
+    const dupDatum = duplicateDimension(datumA, [datumA]);
+    expect(dupDatum.name).toBe("B");
   });
 });

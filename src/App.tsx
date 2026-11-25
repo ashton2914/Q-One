@@ -21,6 +21,7 @@ import { ProjectWorkspace } from "./components/ProjectWorkspace";
 import {
   createDimension,
   createProjectFromPdf,
+  duplicateDimension,
   validateDimensionId,
 } from "./lib/dimensions";
 import {
@@ -856,6 +857,35 @@ export default function App() {
     markDirty();
   }, [project, activeDrawingId, activeDrawingDimensions, markDirty]);
 
+  const handleDuplicateDimension = useCallback(
+    (sourceId: string) => {
+      if (!project || !activeDrawingId) return;
+      const source = project.dimensions.find((d) => d.id === sourceId);
+      if (!source) return;
+      if (editingDimensionId) {
+        handleCancelEditing();
+      }
+      const dup = duplicateDimension(source, activeDrawingDimensions);
+      editingOriginRef.current = { id: dup.id, isNew: true, snapshot: null };
+      setProject((prev) =>
+        prev ? { ...prev, dimensions: [dup, ...prev.dimensions] } : prev,
+      );
+      setSelectedDimensionId(dup.id);
+      setEditingDimensionId(dup.id);
+      setPlacingDimensionId(dup.id);
+      setFocusNameKey((k) => k + 1);
+      markDirty();
+    },
+    [
+      project,
+      activeDrawingId,
+      activeDrawingDimensions,
+      editingDimensionId,
+      handleCancelEditing,
+      markDirty,
+    ],
+  );
+
   const handleStartEditing = useCallback(
     (id: string) => {
       const existing = project?.dimensions.find((d) => d.id === id) ?? null;
@@ -1234,6 +1264,7 @@ export default function App() {
                   onFinishEditing={handleFinishEditing}
                   onCancelEditing={handleCancelEditing}
                   onUpdateDimension={handleUpdateDimension}
+                  onDuplicateDimension={handleDuplicateDimension}
                   onDeleteDimension={(id) => void handleDeleteDimension(id)}
                   onStartPlacing={setPlacingDimensionId}
                   onClearMarker={handleClearMarker}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Check,
   ChevronLeft,
+  Copy,
   Crosshair,
   MapPin,
   MapPinOff,
@@ -53,6 +54,7 @@ export interface DimensionSidebarProps {
   onFinishEditing: () => void;
   onCancelEditing: () => void;
   onUpdateDimension: (id: string, patch: Partial<Dimension>) => void;
+  onDuplicateDimension: (id: string) => void;
   onDeleteDimension: (id: string) => void;
   onStartPlacing: (id: string) => void;
   onClearMarker: (id: string) => void;
@@ -949,10 +951,33 @@ export function DimensionSidebar({
   onFinishEditing,
   onCancelEditing,
   onUpdateDimension,
+  onDuplicateDimension,
   onDeleteDimension,
   onStartPlacing,
   onClearMarker,
 }: DimensionSidebarProps) {
+  const [contextMenu, setContextMenu] = useState<{
+    dimensionId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [contextMenu]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {onBackToDrawings && (
@@ -1067,6 +1092,22 @@ export function DimensionSidebar({
                         tabIndex={0}
                         onClick={() => onSelectDimension(dim.id)}
                         onDoubleClick={() => onStartEditing(dim.id)}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onSelectDimension(dim.id);
+                          const menuW = 160;
+                          const menuH = 112;
+                          const x = Math.min(
+                            e.clientX,
+                            window.innerWidth - menuW - 8,
+                          );
+                          const y = Math.min(
+                            e.clientY,
+                            window.innerHeight - menuH - 8,
+                          );
+                          setContextMenu({ dimensionId: dim.id, x, y });
+                        }}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
@@ -1249,6 +1290,56 @@ export function DimensionSidebar({
           </div>
         )}
       </div>
+
+      {contextMenu && (
+        <div
+          role="menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="fixed z-50 w-40 rounded-md border border-neutral-700 bg-neutral-900 py-1 text-xs shadow-2xl"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              const id = contextMenu.dimensionId;
+              setContextMenu(null);
+              onDuplicateDimension(id);
+            }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-neutral-200 hover:bg-neutral-800 hover:text-white"
+          >
+            <Copy className="h-3.5 w-3.5 text-neutral-400" />
+            Duplicate
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              const id = contextMenu.dimensionId;
+              setContextMenu(null);
+              onStartEditing(id);
+            }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-neutral-200 hover:bg-neutral-800 hover:text-white"
+          >
+            <Pencil className="h-3.5 w-3.5 text-neutral-400" />
+            Edit
+          </button>
+          <div className="my-1 border-t border-neutral-800" />
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              const id = contextMenu.dimensionId;
+              setContextMenu(null);
+              onDeleteDimension(id);
+            }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-rose-300 hover:bg-rose-950/70 hover:text-rose-200"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete
+          </button>
+        </div>
+      )}
     </div>
   );
 }
