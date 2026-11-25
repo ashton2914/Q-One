@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   FilePlus2,
   FolderOpen,
+  FolderPlus,
   Save,
   SaveAll,
   XCircle,
@@ -11,6 +12,7 @@ export interface MenuBarProps {
   projectName: string | null;
   isDirty: boolean;
   hasProject: boolean;
+  onNewProject: () => void;
   onOpenPdf: () => void;
   onOpenProject: () => void;
   onSave: () => void;
@@ -22,6 +24,7 @@ export function MenuBar({
   projectName,
   isDirty,
   hasProject,
+  onNewProject,
   onOpenPdf,
   onOpenProject,
   onSave,
@@ -88,6 +91,18 @@ export function MenuBar({
               role="menu"
               className="absolute left-0 top-full mt-1 w-56 rounded-md border border-neutral-700/90 bg-neutral-900 py-1 shadow-2xl"
             >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => runAction(onNewProject)}
+                className="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs text-neutral-200 hover:bg-neutral-800 hover:text-white"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <FolderPlus className="h-3.5 w-3.5 text-neutral-400" />
+                  New Project
+                </span>
+              </button>
+
               <button
                 type="button"
                 role="menuitem"

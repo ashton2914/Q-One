@@ -1,28 +1,50 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
-import { FilePlus2, FolderOpen } from "lucide-react";
+import { FilePlus2, FolderOpen, FolderPlus, Network } from "lucide-react";
+import { ActivityBar } from "./components/ActivityBar";
 import { DimensionSidebar } from "./components/DimensionSidebar";
 import { MenuBar } from "./components/MenuBar";
-import { PdfViewer, type ScrollToPageRequest } from "./components/PdfViewer";
+import {
+  PdfViewer,
+  type DrawingSwitchOption,
+  type ScrollToPageRequest,
+} from "./components/PdfViewer";
+import { ProjectWorkspace } from "./components/ProjectWorkspace";
 import {
   createDimension,
   createProjectFromPdf,
   validateDimensionId,
 } from "./lib/dimensions";
 import {
-  shouldBlockWindowClose,
-  shouldClearDirtyAfterSave,
-} from "./lib/viewerState";
+  createEmptyProject,
+  createPart,
+  deletePartSubtree,
+  normalizeLoadedProject,
+  reparentPart,
+} from "./lib/partTree";
 import {
+  clearDrawings,
+  getDrawingBytes,
   importPdf,
   openProject,
   pickOpenProjectFile,
   pickPdfFile,
   pickSaveProjectFile,
+  removeDrawingBytes,
   saveProject,
 } from "./lib/tauriApi";
-import type { Dimension, MarkerPosition, ProjectData } from "./types/project";
+import {
+  shouldBlockWindowClose,
+  shouldClearDirtyAfterSave,
+} from "./lib/viewerState";
+import type {
+  ActiveModule,
+  Dimension,
+  MarkerPosition,
+  Part,
+  ProjectData,
+} from "./types/project";
 
 interface StatusMessage {
   kind: "info" | "error";
@@ -30,14 +52,19 @@ interface StatusMessage {
 }
 
 export default function App() {
+  const [activeModule, setActiveModule] = useState<ActiveModule>("project");
   const [project, setProject] = useState<ProjectData | null>(null);
   const [projectFilePath, setProjectFilePath] = useState<string | null>(null);
+  const [selectedPartId, setSelectedPartId] = useState<string | null>(null);
+
+  const [activeDrawingId, setActiveDrawingId] = useState<string | null>(null);
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [zoom, setZoom] = useState<number>(1);
   const [fitRequestKey, setFitRequestKey] = useState<number>(0);
   const [scrollToPageRequest, setScrollToPageRequest] =
     useState<ScrollToPageRequest | null>(null);
+
   const [selectedDimensionId, setSelectedDimensionId] = useState<string | null>(
     null,
   );
@@ -66,8 +93,35 @@ export default function App() {
     setIsDirty(true);
   }, []);
 
-  const activeDrawing = project?.drawings[0] ?? null;
+  const activeDrawing = useMemo(
+    () => project?.drawings.find((d) => d.id === activeDrawingId) ?? null,
+    [project, activeDrawingId],
+  );
   const pageCount = activeDrawing?.pageCount ?? 1;
+
+  const activeDrawingDimensions = useMemo(() => {
+    if (!project || !activeDrawingId) return [];
+    return project.dimensions.filter(
+      (d) => (d.drawingId ?? d.marker?.drawingId ?? null) === activeDrawingId,
+    );
+  }, [project, activeDrawingId]);
+
+  const drawingSwitchOptions = useMemo<DrawingSwitchOption[]>(() => {
+    if (!project) return [];
+    const partByDrawingId = new Map<string, Part>();
+    for (const part of project.parts) {
+      for (const drwId of part.drawingIds) {
+        partByDrawingId.set(drwId, part);
+      }
+    }
+    return project.drawings.map((drw) => {
+      const part = partByDrawingId.get(drw.id);
+      const label = part
+        ? `${part.name.trim() || "Untitled Part"} / ${drw.filename}`
+        : drw.filename;
+      return { id: drw.id, label };
+    });
+  }, [project]);
 
   const showStatus = useCallback((kind: "info" | "error", text: string) => {
     setStatus({ kind, text });
@@ -86,11 +140,34 @@ export default function App() {
     );
   }, [isDirty]);
 
+  const handleNewProject = useCallback(async () => {
+    if (!confirmDiscardIfDirty()) return;
+    try {
+      await clearDrawings();
+    } catch {
+      // Ignore outside Tauri runtime
+    }
+    const fresh = createEmptyProject("Untitled Project");
+    setProject(fresh);
+    setProjectFilePath(null);
+    setSelectedPartId(null);
+    setActiveDrawingId(null);
+    setPdfBytes(null);
+    setCurrentPage(1);
+    setSelectedDimensionId(null);
+    setEditingDimensionId(null);
+    setPlacingDimensionId(null);
+    setIsDirty(false);
+    setActiveModule("project");
+    showStatus("info", "Created new project");
+  }, [confirmDiscardIfDirty, showStatus]);
+
   const handleOpenPdf = useCallback(async () => {
     if (!confirmDiscardIfDirty()) return;
     try {
       const path = await pickPdfFile();
       if (!path) return;
+      await clearDrawings();
       const imported = await importPdf(path);
       const nextProject = createProjectFromPdf(
         imported.drawingId,
@@ -99,19 +176,19 @@ export default function App() {
       );
       setProject(nextProject);
       setProjectFilePath(null);
+      setSelectedPartId(nextProject.parts[0]?.id ?? null);
+      setActiveDrawingId(imported.drawingId);
       setPdfBytes(imported.pdfBytes);
       setCurrentPage(1);
       setSelectedDimensionId(null);
       setEditingDimensionId(null);
       setPlacingDimensionId(null);
       setIsDirty(true);
+      setActiveModule("drawing");
       setFitRequestKey((k) => k + 1);
       showStatus("info", `Loaded drawing "${imported.filename}"`);
     } catch (err) {
-      showStatus(
-        "error",
-        err instanceof Error ? err.message : String(err),
-      );
+      showStatus("error", err instanceof Error ? err.message : String(err));
     }
   }, [confirmDiscardIfDirty, showStatus]);
 
@@ -121,21 +198,31 @@ export default function App() {
       const path = await pickOpenProjectFile();
       if (!path) return;
       const opened = await openProject(path);
-      setProject(opened.project);
+      const normalized = normalizeLoadedProject(opened.project);
+      setProject(normalized);
       setProjectFilePath(path);
+      setSelectedPartId(normalized.parts[0]?.id ?? null);
+      setActiveDrawingId(opened.activeDrawingId);
       setPdfBytes(opened.pdfBytes);
       setCurrentPage(1);
-      setSelectedDimensionId(opened.project.dimensions[0]?.id ?? null);
+      const firstDrwDim = opened.activeDrawingId
+        ? normalized.dimensions.find(
+            (d) =>
+              (d.drawingId ?? d.marker?.drawingId ?? null) ===
+              opened.activeDrawingId,
+          )
+        : undefined;
+      setSelectedDimensionId(firstDrwDim?.id ?? null);
       setEditingDimensionId(null);
       setPlacingDimensionId(null);
       setIsDirty(false);
-      setFitRequestKey((k) => k + 1);
-      showStatus("info", `Opened project "${opened.project.name}"`);
+      setActiveModule(opened.activeDrawingId ? "drawing" : "project");
+      if (opened.activeDrawingId) {
+        setFitRequestKey((k) => k + 1);
+      }
+      showStatus("info", `Opened project "${normalized.name}"`);
     } catch (err) {
-      showStatus(
-        "error",
-        err instanceof Error ? err.message : String(err),
-      );
+      showStatus("error", err instanceof Error ? err.message : String(err));
     }
   }, [confirmDiscardIfDirty, showStatus]);
 
@@ -169,10 +256,7 @@ export default function App() {
         const displayName = targetPath.split(/[\\/]/).pop() ?? targetPath;
         showStatus("info", `Saved project to ${displayName}`);
       } catch (err) {
-        showStatus(
-          "error",
-          err instanceof Error ? err.message : String(err),
-        );
+        showStatus("error", err instanceof Error ? err.message : String(err));
       } finally {
         isSavingRef.current = false;
       }
@@ -217,32 +301,256 @@ export default function App() {
     void persistProject(true);
   }, [persistProject]);
 
-  const handleCloseProject = useCallback(() => {
+  const handleCloseProject = useCallback(async () => {
     if (!project) return;
     if (!confirmDiscardIfDirty()) return;
+    try {
+      await clearDrawings();
+    } catch {
+      // ignore outside Tauri
+    }
     setProject(null);
     setProjectFilePath(null);
+    setSelectedPartId(null);
+    setActiveDrawingId(null);
     setPdfBytes(null);
     setCurrentPage(1);
     setSelectedDimensionId(null);
+    setEditingDimensionId(null);
     setPlacingDimensionId(null);
     setIsDirty(false);
     showStatus("info", "Project closed");
   }, [project, confirmDiscardIfDirty, showStatus]);
 
-  const handlePageCountLoaded = useCallback((count: number) => {
-    setProject((prev) => {
-      if (!prev || prev.drawings.length === 0) return prev;
-      if (prev.drawings[0].pageCount === count) return prev;
-      const drawings = [...prev.drawings];
-      drawings[0] = { ...drawings[0], pageCount: count };
-      return { ...prev, drawings };
-    });
-  }, []);
+  // Project / BOM handlers
+  const handleRenameProject = useCallback(
+    (name: string) => {
+      setProject((prev) => (prev ? { ...prev, name } : prev));
+      markDirty();
+    },
+    [markDirty],
+  );
+
+  const handleAddPart = useCallback(
+    (parentId: string | null) => {
+      if (!project) return;
+      const defaultName =
+        parentId === null
+          ? `Part ${project.parts.length + 1}`
+          : `Sub-part ${project.parts.length + 1}`;
+      const nextPart = createPart(parentId, defaultName);
+      setProject((prev) =>
+        prev ? { ...prev, parts: [...prev.parts, nextPart] } : prev,
+      );
+      setSelectedPartId(nextPart.id);
+      markDirty();
+    },
+    [project, markDirty],
+  );
+
+  const handleUpdatePart = useCallback(
+    (partId: string, patch: Partial<Part>) => {
+      setProject((prev) =>
+        prev
+          ? {
+              ...prev,
+              parts: prev.parts.map((p) =>
+                p.id === partId ? { ...p, ...patch } : p,
+              ),
+            }
+          : prev,
+      );
+      markDirty();
+    },
+    [markDirty],
+  );
+
+  const handleReparentPart = useCallback(
+    (partId: string, newParentId: string | null) => {
+      setProject((prev) => {
+        if (!prev) return prev;
+        const nextParts = reparentPart(prev.parts, partId, newParentId);
+        return { ...prev, parts: nextParts };
+      });
+      markDirty();
+    },
+    [markDirty],
+  );
+
+  const handleDeletePart = useCallback(
+    async (partId: string) => {
+      if (!project) return;
+      const preview = deletePartSubtree(project.parts, partId);
+      const removedSet = new Set(preview.removedDrawingIds);
+      const affectedDims = project.dimensions.filter((d) =>
+        removedSet.has(d.drawingId ?? d.marker?.drawingId ?? ""),
+      ).length;
+
+      if (
+        preview.removedPartIds.length > 1 ||
+        preview.removedDrawingIds.length > 0 ||
+        affectedDims > 0
+      ) {
+        const ok = window.confirm(
+          `Delete this part along with ${preview.removedPartIds.length - 1} sub-part(s), ${preview.removedDrawingIds.length} drawing(s), and ${affectedDims} dimension(s)?`,
+        );
+        if (!ok) return;
+      }
+
+      for (const drwId of preview.removedDrawingIds) {
+        try {
+          await removeDrawingBytes(drwId);
+        } catch {
+          // ignore
+        }
+      }
+
+      setProject((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          parts: preview.remainingParts,
+          drawings: prev.drawings.filter((d) => !removedSet.has(d.id)),
+          dimensions: prev.dimensions.filter(
+            (d) => !removedSet.has(d.drawingId ?? d.marker?.drawingId ?? ""),
+          ),
+        };
+      });
+
+      if (selectedPartId && preview.removedPartIds.includes(selectedPartId)) {
+        setSelectedPartId(preview.remainingParts[0]?.id ?? null);
+      }
+      if (activeDrawingId && removedSet.has(activeDrawingId)) {
+        setActiveDrawingId(null);
+        setPdfBytes(null);
+        setSelectedDimensionId(null);
+        setEditingDimensionId(null);
+        setPlacingDimensionId(null);
+      }
+      markDirty();
+    },
+    [project, selectedPartId, activeDrawingId, markDirty],
+  );
+
+  const handleAttachPdf = useCallback(
+    async (partId: string) => {
+      if (!project) return;
+      try {
+        const path = await pickPdfFile();
+        if (!path) return;
+        const imported = await importPdf(path);
+        const newDrawing = {
+          id: imported.drawingId,
+          filename: imported.filename,
+          archivePath: `drawings/${imported.drawingId}.pdf`,
+          pageCount: 1,
+        };
+        setProject((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            drawings: [...prev.drawings, newDrawing],
+            parts: prev.parts.map((p) =>
+              p.id === partId
+                ? { ...p, drawingIds: [...p.drawingIds, imported.drawingId] }
+                : p,
+            ),
+          };
+        });
+        markDirty();
+        showStatus("info", `Attached "${imported.filename}"`);
+      } catch (err) {
+        showStatus("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [project, markDirty, showStatus],
+  );
+
+  const handleDetachPdf = useCallback(
+    async (partId: string, drawingId: string) => {
+      if (!project) return;
+      const dimCount = project.dimensions.filter(
+        (d) => (d.drawingId ?? d.marker?.drawingId ?? null) === drawingId,
+      ).length;
+      if (dimCount > 0) {
+        const ok = window.confirm(
+          `Remove this drawing and its ${dimCount} dimension(s)?`,
+        );
+        if (!ok) return;
+      }
+      try {
+        await removeDrawingBytes(drawingId);
+      } catch {
+        // ignore
+      }
+      setProject((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          parts: prev.parts.map((p) =>
+            p.id === partId
+              ? { ...p, drawingIds: p.drawingIds.filter((id) => id !== drawingId) }
+              : p,
+          ),
+          drawings: prev.drawings.filter((d) => d.id !== drawingId),
+          dimensions: prev.dimensions.filter(
+            (d) => (d.drawingId ?? d.marker?.drawingId ?? null) !== drawingId,
+          ),
+        };
+      });
+      if (activeDrawingId === drawingId) {
+        setActiveDrawingId(null);
+        setPdfBytes(null);
+        setSelectedDimensionId(null);
+        setEditingDimensionId(null);
+        setPlacingDimensionId(null);
+      }
+      markDirty();
+    },
+    [project, activeDrawingId, markDirty],
+  );
+
+  const handleOpenDrawing = useCallback(
+    async (drawingId: string) => {
+      if (!project) return;
+      try {
+        if (drawingId !== activeDrawingId || !pdfBytes) {
+          const bytes = await getDrawingBytes(drawingId);
+          setActiveDrawingId(drawingId);
+          setPdfBytes(bytes);
+          setCurrentPage(1);
+          setSelectedDimensionId(null);
+          setEditingDimensionId(null);
+          setPlacingDimensionId(null);
+          setFitRequestKey((k) => k + 1);
+        }
+        setActiveModule("drawing");
+      } catch (err) {
+        showStatus("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [project, activeDrawingId, pdfBytes, showStatus],
+  );
+
+  // Drawing / Dimension handlers
+  const handlePageCountLoaded = useCallback(
+    (count: number) => {
+      if (!activeDrawingId) return;
+      setProject((prev) => {
+        if (!prev) return prev;
+        const idx = prev.drawings.findIndex((d) => d.id === activeDrawingId);
+        if (idx === -1 || prev.drawings[idx].pageCount === count) return prev;
+        const drawings = [...prev.drawings];
+        drawings[idx] = { ...drawings[idx], pageCount: count };
+        return { ...prev, drawings };
+      });
+    },
+    [activeDrawingId],
+  );
 
   const handleAddDimension = useCallback(() => {
-    if (!project) return;
-    const nextDim = createDimension(project.dimensions);
+    if (!project || !activeDrawingId) return;
+    const nextDim = createDimension(activeDrawingDimensions, activeDrawingId);
     editingOriginRef.current = { id: nextDim.id, isNew: true, snapshot: null };
     setProject({
       ...project,
@@ -253,7 +561,7 @@ export default function App() {
     setPlacingDimensionId(nextDim.id);
     setFocusNameKey((k) => k + 1);
     markDirty();
-  }, [project, markDirty]);
+  }, [project, activeDrawingId, activeDrawingDimensions, markDirty]);
 
   const handleStartEditing = useCallback(
     (id: string) => {
@@ -261,7 +569,12 @@ export default function App() {
       editingOriginRef.current = {
         id,
         isNew: false,
-        snapshot: existing ? { ...existing, marker: existing.marker ? { ...existing.marker } : null } : null,
+        snapshot: existing
+          ? {
+              ...existing,
+              marker: existing.marker ? { ...existing.marker } : null,
+            }
+          : null,
       };
       setSelectedDimensionId(id);
       setEditingDimensionId(id);
@@ -279,7 +592,7 @@ export default function App() {
         const idErr = validateDimensionId(
           currentDim.name,
           currentDim.id,
-          project.dimensions,
+          activeDrawingDimensions,
         );
         if (idErr) return;
 
@@ -307,7 +620,7 @@ export default function App() {
     editingOriginRef.current = null;
     setEditingDimensionId(null);
     setPlacingDimensionId(null);
-  }, [editingDimensionId, project]);
+  }, [editingDimensionId, project, activeDrawingDimensions]);
 
   const handleCancelEditing = useCallback(() => {
     const origin = editingOriginRef.current;
@@ -370,7 +683,7 @@ export default function App() {
   const handleSelectFromSidebar = useCallback(
     (id: string) => {
       setSelectedDimensionId(id);
-      const dim = project?.dimensions.find((d) => d.id === id);
+      const dim = activeDrawingDimensions.find((d) => d.id === id);
       if (dim?.marker) {
         setCurrentPage(dim.marker.page);
         setScrollToPageRequest({
@@ -380,7 +693,7 @@ export default function App() {
         });
       }
     },
-    [project],
+    [activeDrawingDimensions],
   );
 
   const handleSelectFromDrawing = useCallback((id: string) => {
@@ -427,7 +740,9 @@ export default function App() {
         return {
           ...prev,
           dimensions: prev.dimensions.map((d) =>
-            d.id === dimensionId ? { ...d, marker } : d,
+            d.id === dimensionId
+              ? { ...d, drawingId: marker.drawingId, marker }
+              : d,
           ),
         };
       });
@@ -490,11 +805,12 @@ export default function App() {
         projectName={project?.name ?? null}
         isDirty={isDirty}
         hasProject={project !== null}
+        onNewProject={() => void handleNewProject()}
         onOpenPdf={() => void handleOpenPdf()}
         onOpenProject={() => void handleOpenProject()}
         onSave={handleSave}
         onSaveAs={handleSaveAs}
-        onCloseProject={handleCloseProject}
+        onCloseProject={() => void handleCloseProject()}
       />
 
       {status && (
@@ -517,52 +833,15 @@ export default function App() {
       )}
 
       <div className="flex min-h-0 flex-1">
-        <aside className="flex w-80 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950">
-          <DimensionSidebar
-            dimensions={project?.dimensions ?? []}
-            selectedDimensionId={selectedDimensionId}
-            editingDimensionId={editingDimensionId}
-            placingDimensionId={placingDimensionId}
-            focusNameKey={focusNameKey}
-            hasProject={project !== null}
-            onAddDimension={handleAddDimension}
-            onSelectDimension={handleSelectFromSidebar}
-            onStartEditing={handleStartEditing}
-            onFinishEditing={handleFinishEditing}
-            onCancelEditing={handleCancelEditing}
-            onUpdateDimension={handleUpdateDimension}
-            onDeleteDimension={handleDeleteDimension}
-            onStartPlacing={setPlacingDimensionId}
-            onClearMarker={handleClearMarker}
-          />
-        </aside>
+        <ActivityBar
+          activeModule={activeModule}
+          onSelectModule={setActiveModule}
+          hasActiveDrawing={activeDrawingId !== null}
+        />
 
-        {project && pdfBytes ? (
-          <PdfViewer
-            pdfBytes={pdfBytes}
-            drawingId={activeDrawing?.id ?? null}
-            drawingFilename={activeDrawing?.filename ?? null}
-            currentPage={currentPage}
-            pageCount={pageCount}
-            zoom={zoom}
-            fitRequestKey={fitRequestKey}
-            scrollToPageRequest={scrollToPageRequest}
-            dimensions={project.dimensions}
-            selectedDimensionId={selectedDimensionId}
-            editingDimensionId={editingDimensionId}
-            placingDimensionId={placingDimensionId}
-            onPageCountLoaded={handlePageCountLoaded}
-            onPageChange={setCurrentPage}
-            onZoomChange={setZoom}
-            onFitToView={() => setFitRequestKey((k) => k + 1)}
-            onPlaceMarker={handlePlaceMarker}
-            onSelectDimension={handleSelectFromDrawing}
-            onMoveMarker={handleMoveMarker}
-            onCancelPlacing={() => setPlacingDimensionId(null)}
-          />
-        ) : (
+        {!project ? (
           <main className="flex flex-1 items-center justify-center bg-neutral-900 p-8">
-            <div className="max-w-md rounded-xl border border-neutral-800 bg-neutral-950/90 p-8 text-center shadow-xl">
+            <div className="max-w-lg rounded-xl border border-neutral-800 bg-neutral-950/90 p-8 text-center shadow-xl">
               <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-neutral-800 text-lg font-bold text-neutral-100 ring-1 ring-neutral-700">
                 DM
               </div>
@@ -570,15 +849,24 @@ export default function App() {
                 DM-One Dimension Manager
               </h1>
               <p className="mt-2 text-xs leading-relaxed text-neutral-400">
-                Open a PDF engineering drawing to compile your dimension list and
-                place balloon markers, or resume an existing{" "}
-                <span className="font-mono text-neutral-300">.dmone</span> project.
+                Create a new multi-part BOM project, open a PDF engineering
+                drawing directly, or resume an existing{" "}
+                <span className="font-mono text-neutral-300">.dmone</span>{" "}
+                project.
               </p>
-              <div className="mt-6 flex items-center justify-center gap-3">
+              <div className="mt-6 flex flex-wrap items-center justify-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => void handleNewProject()}
+                  className="inline-flex items-center gap-2 rounded-md bg-neutral-100 px-4 py-2 text-xs font-medium text-neutral-950 hover:bg-white"
+                >
+                  <FolderPlus className="h-4 w-4" />
+                  New Project
+                </button>
                 <button
                   type="button"
                   onClick={() => void handleOpenPdf()}
-                  className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-xs font-medium text-white hover:bg-blue-500"
+                  className="inline-flex items-center gap-2 rounded-md bg-neutral-800 px-4 py-2 text-xs font-medium text-neutral-200 hover:bg-neutral-700"
                 >
                   <FilePlus2 className="h-4 w-4" />
                   Open PDF Drawing
@@ -594,6 +882,93 @@ export default function App() {
               </div>
             </div>
           </main>
+        ) : activeModule === "project" ? (
+          <ProjectWorkspace
+            project={project}
+            selectedPartId={selectedPartId}
+            onSelectPart={setSelectedPartId}
+            onRenameProject={handleRenameProject}
+            onAddPart={handleAddPart}
+            onUpdatePart={handleUpdatePart}
+            onReparentPart={handleReparentPart}
+            onDeletePart={(id) => void handleDeletePart(id)}
+            onAttachPdf={(id) => void handleAttachPdf(id)}
+            onDetachPdf={(partId, drwId) => void handleDetachPdf(partId, drwId)}
+            onOpenDrawing={(drwId) => void handleOpenDrawing(drwId)}
+          />
+        ) : (
+          <div className="flex min-h-0 min-w-0 flex-1">
+            <aside className="flex w-80 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950">
+              <DimensionSidebar
+                dimensions={activeDrawingDimensions}
+                selectedDimensionId={selectedDimensionId}
+                editingDimensionId={editingDimensionId}
+                placingDimensionId={placingDimensionId}
+                focusNameKey={focusNameKey}
+                hasProject={activeDrawingId !== null}
+                onAddDimension={handleAddDimension}
+                onSelectDimension={handleSelectFromSidebar}
+                onStartEditing={handleStartEditing}
+                onFinishEditing={handleFinishEditing}
+                onCancelEditing={handleCancelEditing}
+                onUpdateDimension={handleUpdateDimension}
+                onDeleteDimension={handleDeleteDimension}
+                onStartPlacing={setPlacingDimensionId}
+                onClearMarker={handleClearMarker}
+              />
+            </aside>
+
+            {activeDrawing && pdfBytes ? (
+              <PdfViewer
+                pdfBytes={pdfBytes}
+                drawingId={activeDrawing.id}
+                drawingFilename={activeDrawing.filename}
+                drawingOptions={drawingSwitchOptions}
+                onSwitchDrawing={(drwId) => void handleOpenDrawing(drwId)}
+                currentPage={currentPage}
+                pageCount={pageCount}
+                zoom={zoom}
+                fitRequestKey={fitRequestKey}
+                scrollToPageRequest={scrollToPageRequest}
+                dimensions={activeDrawingDimensions}
+                selectedDimensionId={selectedDimensionId}
+                editingDimensionId={editingDimensionId}
+                placingDimensionId={placingDimensionId}
+                onPageCountLoaded={handlePageCountLoaded}
+                onPageChange={setCurrentPage}
+                onZoomChange={setZoom}
+                onFitToView={() => setFitRequestKey((k) => k + 1)}
+                onPlaceMarker={handlePlaceMarker}
+                onSelectDimension={handleSelectFromDrawing}
+                onMoveMarker={handleMoveMarker}
+                onCancelPlacing={() => setPlacingDimensionId(null)}
+              />
+            ) : (
+              <main className="flex flex-1 items-center justify-center bg-neutral-900 p-8">
+                <div className="max-w-sm rounded-xl border border-neutral-800 bg-neutral-950/90 p-6 text-center shadow-xl">
+                  <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-neutral-800 text-neutral-300">
+                    <Network className="h-5 w-5" />
+                  </div>
+                  <h2 className="text-sm font-semibold text-neutral-100">
+                    No Drawing Active
+                  </h2>
+                  <p className="mt-1.5 text-xs leading-relaxed text-neutral-400">
+                    Open the{" "}
+                    <span className="font-medium text-neutral-200">Project</span>{" "}
+                    module to attach a PDF drawing to a part and open it here.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setActiveModule("project")}
+                    className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-neutral-100 px-4 py-2 text-xs font-medium text-neutral-950 hover:bg-white"
+                  >
+                    <Network className="h-3.5 w-3.5" />
+                    Go to Project
+                  </button>
+                </div>
+              </main>
+            )}
+          </div>
         )}
       </div>
     </div>
