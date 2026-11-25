@@ -999,10 +999,7 @@ export function ProjectWorkspace({
                         onAttachPdf={() => onAttachPdf(part.id)}
                         onDetachPdf={(drwId) => onDetachPdf(part.id, drwId)}
                         onOpenDrawing={onOpenDrawing}
-                        onDelete={() => {
-                          setEditingPartId(null);
-                          onDeletePart(part.id);
-                        }}
+                        onDelete={() => onDeletePart(part.id)}
                       />
                     );
                   }

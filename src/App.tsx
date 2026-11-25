@@ -53,6 +53,17 @@ interface StatusMessage {
   text: string;
 }
 
+async function confirmDestructive(
+  message: string,
+  title: string,
+): Promise<boolean> {
+  try {
+    return await confirmDialog(message, { title, kind: "warning" });
+  } catch {
+    return window.confirm(message);
+  }
+}
+
 export default function App() {
   const [activeModule, setActiveModule] = useState<ActiveModule>("project");
   const [project, setProject] = useState<ProjectData | null>(null);
@@ -443,22 +454,23 @@ export default function App() {
   const handleDeletePart = useCallback(
     async (partId: string) => {
       if (!project) return;
+      const targetPart = project.parts.find((p) => p.id === partId);
+      const partLabel = targetPart?.name.trim() || "Untitled Part";
       const preview = deletePartSubtree(project.parts, partId);
       const removedSet = new Set(preview.removedDrawingIds);
       const affectedDims = project.dimensions.filter((d) =>
         removedSet.has(d.drawingId ?? d.marker?.drawingId ?? ""),
       ).length;
 
-      if (
+      const hasNestedImpact =
         preview.removedPartIds.length > 1 ||
         preview.removedDrawingIds.length > 0 ||
-        affectedDims > 0
-      ) {
-        const ok = window.confirm(
-          `Delete this part along with ${preview.removedPartIds.length - 1} sub-part(s), ${preview.removedDrawingIds.length} drawing(s), and ${affectedDims} dimension(s)?`,
-        );
-        if (!ok) return;
-      }
+        affectedDims > 0;
+      const message = hasNestedImpact
+        ? `Delete "${partLabel}" along with ${preview.removedPartIds.length - 1} sub-part(s), ${preview.removedDrawingIds.length} drawing(s), and ${affectedDims} dimension(s)?`
+        : `Delete part "${partLabel}"?`;
+      const ok = await confirmDestructive(message, "Delete Part");
+      if (!ok) return;
 
       for (const drwId of preview.removedDrawingIds) {
         try {
@@ -563,15 +575,19 @@ export default function App() {
   const handleDetachPdf = useCallback(
     async (partId: string, drawingId: string) => {
       if (!project) return;
+      const drw = project.drawings.find((d) => d.id === drawingId);
+      const drwLabel = drw?.version?.trim()
+        ? `Version: ${drw.version.trim()} (${drw.filename})`
+        : drw?.filename ?? "this drawing";
       const dimCount = project.dimensions.filter(
         (d) => (d.drawingId ?? d.marker?.drawingId ?? null) === drawingId,
       ).length;
-      if (dimCount > 0) {
-        const ok = window.confirm(
-          `Remove this drawing and its ${dimCount} dimension(s)?`,
-        );
-        if (!ok) return;
-      }
+      const message =
+        dimCount > 0
+          ? `Delete ${drwLabel} and its ${dimCount} dimension(s)?`
+          : `Delete ${drwLabel}?`;
+      const ok = await confirmDestructive(message, "Delete Drawing");
+      if (!ok) return;
       const ownerPart = project.parts.find((p) => p.id === partId);
       const fallbackDrawingId =
         ownerPart?.drawingIds.find((id) => id !== drawingId) ?? null;
@@ -922,7 +938,17 @@ export default function App() {
   );
 
   const handleDeleteDimension = useCallback(
-    (id: string) => {
+    async (id: string) => {
+      const dim = project?.dimensions.find((d) => d.id === id);
+      const label = dim?.name.trim()
+        ? `dimension "${dim.name.trim()}"`
+        : "this dimension";
+      const ok = await confirmDestructive(
+        `Delete ${label}?`,
+        "Delete Dimension",
+      );
+      if (!ok) return;
+
       setProject((prev) => {
         if (!prev) return prev;
         return {
@@ -935,7 +961,7 @@ export default function App() {
       setPlacingDimensionId((prev) => (prev === id ? null : prev));
       markDirty();
     },
-    [markDirty],
+    [project, markDirty],
   );
 
   const handlePlaceMarker = useCallback(
@@ -1131,7 +1157,7 @@ export default function App() {
                   onFinishEditing={handleFinishEditing}
                   onCancelEditing={handleCancelEditing}
                   onUpdateDimension={handleUpdateDimension}
-                  onDeleteDimension={handleDeleteDimension}
+                  onDeleteDimension={(id) => void handleDeleteDimension(id)}
                   onStartPlacing={setPlacingDimensionId}
                   onClearMarker={handleClearMarker}
                 />
