@@ -148,7 +148,9 @@ export default function App() {
     }
     return project.drawings.map((drw) => {
       const part = partByDrawingId.get(drw.id);
-      const drwTitle = drw.version?.trim() || drw.filename;
+      const drwTitle = drw.version?.trim()
+        ? `Version: ${drw.version.trim()}`
+        : drw.filename;
       const label = part
         ? `${part.name.trim() || "Untitled Part"} / ${drwTitle}`
         : drwTitle;
@@ -1113,7 +1115,9 @@ export default function App() {
                   focusNameKey={focusNameKey}
                   hasProject={activeDrawingId !== null}
                   activeDrawingFilename={
-                    activeDrawing.version?.trim() || activeDrawing.filename
+                    activeDrawing.version?.trim()
+                      ? `Version: ${activeDrawing.version.trim()}`
+                      : activeDrawing.filename
                   }
                   onBackToDrawings={() => {
                     if (editingDimensionId) {

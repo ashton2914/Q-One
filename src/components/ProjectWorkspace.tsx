@@ -1164,7 +1164,9 @@ export function ProjectWorkspace({
                               >
                                 <FileText className="h-2.5 w-2.5 shrink-0 text-emerald-400" />
                                 <span className="truncate">
-                                  {drw.version?.trim() || drw.filename}
+                                  {drw.version?.trim()
+                                    ? `Version: ${drw.version.trim()}`
+                                    : drw.filename}
                                 </span>
                               </button>
                             ))}

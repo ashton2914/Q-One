@@ -140,6 +140,9 @@ export function DrawingListSidebar({
                                   : "text-neutral-400"
                               }`}
                             />
+                            <span className="shrink-0 text-xs font-medium text-neutral-400">
+                              Version:
+                            </span>
                             <input
                               ref={(el) => {
                                 if (el) {
@@ -151,7 +154,7 @@ export function DrawingListSidebar({
                               type="text"
                               aria-label="Drawing version"
                               value={drw.version ?? ""}
-                              placeholder="Enter version (e.g. Rev A)"
+                              placeholder="A, B, C..."
                               onClick={(e) => e.stopPropagation()}
                               onChange={(e) =>
                                 onUpdateDrawingVersion(drw.id, e.target.value)
@@ -163,10 +166,16 @@ export function DrawingListSidebar({
                                   e.currentTarget.blur();
                                 }
                               }}
-                              className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 font-mono text-xs font-semibold text-neutral-100 placeholder:font-sans placeholder:font-normal placeholder:text-neutral-500 hover:border-neutral-700 focus:border-neutral-500 focus:bg-neutral-950 focus:outline-none"
+                              className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 font-mono text-xs font-semibold text-neutral-100 placeholder:font-sans placeholder:font-normal placeholder:text-neutral-600 hover:border-neutral-700 focus:border-neutral-500 focus:bg-neutral-950 focus:outline-none"
                             />
                           </div>
-                          <div className="mt-1 flex items-center gap-1.5 pl-5 font-mono text-[10px] text-neutral-400">
+                          <div
+                            title={drw.filename}
+                            className="mt-0.5 truncate pl-5 font-mono text-[10px] text-neutral-500"
+                          >
+                            {drw.filename}
+                          </div>
+                          <div className="mt-0.5 flex items-center gap-1.5 pl-5 font-mono text-[10px] text-neutral-400">
                             <span>{drw.pageCount}p</span>
                             <span>·</span>
                             <span>
