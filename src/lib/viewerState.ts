@@ -115,3 +115,50 @@ export function computeSafeRenderScale(
   const maxByArea = Math.sqrt(MAX_CANVAS_PIXELS / (baseWidth * baseHeight));
   return Math.max(0.1, Math.min(desiredScale, maxBySide, maxByArea));
 }
+
+export interface PageRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export interface PageCrop {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export function computeVisiblePageCrop(
+  pageRect: PageRect,
+  containerRect: PageRect,
+  overscanPx = 160,
+): PageCrop | null {
+  if (pageRect.width <= 0 || pageRect.height <= 0) return null;
+
+  const visLeft = Math.max(pageRect.left, containerRect.left - overscanPx);
+  const visTop = Math.max(pageRect.top, containerRect.top - overscanPx);
+  const visRight = Math.min(
+    pageRect.left + pageRect.width,
+    containerRect.left + containerRect.width + overscanPx,
+  );
+  const visBottom = Math.min(
+    pageRect.top + pageRect.height,
+    containerRect.top + containerRect.height + overscanPx,
+  );
+
+  if (visRight <= visLeft || visBottom <= visTop) {
+    return null;
+  }
+
+  const x = Math.max(0, Math.floor(visLeft - pageRect.left));
+  const y = Math.max(0, Math.floor(visTop - pageRect.top));
+  const maxW = Math.ceil(pageRect.width) - x;
+  const maxH = Math.ceil(pageRect.height) - y;
+  const width = Math.min(maxW, Math.ceil(visRight - visLeft));
+  const height = Math.min(maxH, Math.ceil(visBottom - visTop));
+
+  if (width <= 0 || height <= 0) return null;
+  return { x, y, width, height };
+}

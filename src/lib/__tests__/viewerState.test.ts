@@ -3,6 +3,7 @@ import {
   computeAnchoredScroll,
   computeFitZoom,
   computeSafeRenderScale,
+  computeVisiblePageCrop,
   computeWheelTargetZoom,
   findMostVisiblePage,
   shouldApplyFit,
@@ -86,5 +87,42 @@ describe("viewerState review fixes", () => {
     expect(h).toBeLessThanOrEqual(4096);
     expect(w * h).toBeLessThanOrEqual(12_000_000);
     expect(safeScale).toBeGreaterThan(0.5);
+  });
+
+  it("computes visible viewport crop on a zoomed page for native-vector detail rendering", () => {
+    // Page is 10000x6000 positioned at (-3000, -1500) relative to a 1000x800 viewport
+    const crop = computeVisiblePageCrop(
+      { left: -3000, top: -1500, width: 10000, height: 6000 },
+      { left: 0, top: 0, width: 1000, height: 800 },
+      100,
+    );
+    expect(crop).toEqual({
+      x: 2900,
+      y: 1400,
+      width: 1200,
+      height: 1000,
+    });
+
+    // Clamps cleanly at page edges (0, 0)
+    const edgeCrop = computeVisiblePageCrop(
+      { left: 50, top: 20, width: 1000, height: 800 },
+      { left: 0, top: 0, width: 500, height: 400 },
+      100,
+    );
+    expect(edgeCrop).toEqual({
+      x: 0,
+      y: 0,
+      width: 550,
+      height: 480,
+    });
+
+    // Returns null when page is completely off-screen
+    expect(
+      computeVisiblePageCrop(
+        { left: 0, top: 2000, width: 1000, height: 800 },
+        { left: 0, top: 0, width: 1000, height: 800 },
+        100,
+      ),
+    ).toBeNull();
   });
 });

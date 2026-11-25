@@ -24,9 +24,11 @@ import {
   computeAnchoredScroll,
   computeFitZoom,
   computeSafeRenderScale,
+  computeVisiblePageCrop,
   computeWheelTargetZoom,
   findMostVisiblePage,
   shouldApplyFit,
+  type PageCrop,
   type PageDimensions,
 } from "../lib/viewerState";
 import { BalloonOverlay } from "./BalloonOverlay";
@@ -69,6 +71,7 @@ interface PdfPageItemProps {
   baseSize: PageDimensions;
   displayZoom: number;
   renderZoom: number;
+  viewportEpoch: number;
   drawingId: string | null;
   dimensions: Dimension[];
   selectedDimensionId: string | null;
@@ -80,12 +83,17 @@ interface PdfPageItemProps {
   onMoveMarker: (dimensionId: string, x: number, y: number) => void;
 }
 
+interface DetailTileRect extends PageCrop {
+  zoom: number;
+}
+
 function PdfPageItem({
   pdfDoc,
   pageNumber,
   baseSize,
   displayZoom,
   renderZoom,
+  viewportEpoch,
   drawingId,
   dimensions,
   selectedDimensionId,
@@ -97,8 +105,11 @@ function PdfPageItem({
   onMoveMarker,
 }: PdfPageItemProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const baseCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const detailCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const baseScaleRef = useRef<number>(0);
   const [isVisible, setIsVisible] = useState<boolean>(pageNumber <= 2);
+  const [detailTile, setDetailTile] = useState<DetailTileRect | null>(null);
 
   const width = Math.max(1, Math.round(baseSize.width * displayZoom));
   const height = Math.max(1, Math.round(baseSize.height * displayZoom));
@@ -126,14 +137,35 @@ function PdfPageItem({
     return () => observer.disconnect();
   }, [scrollContainer]);
 
+  // Layer 1: Lightweight base overview canvas (always stays visible while panning/zooming)
   useEffect(() => {
-    const visibleCanvas = canvasRef.current;
-    if (!visibleCanvas) return;
+    const baseCanvas = baseCanvasRef.current;
+    if (!baseCanvas) return;
 
     if (!isVisible) {
-      // Free WebKit canvas backing-store memory for far-offscreen pages
-      visibleCanvas.width = 0;
-      visibleCanvas.height = 0;
+      baseCanvas.width = 0;
+      baseCanvas.height = 0;
+      baseScaleRef.current = 0;
+      if (detailCanvasRef.current) {
+        detailCanvasRef.current.width = 0;
+        detailCanvasRef.current.height = 0;
+      }
+      setDetailTile(null);
+      return;
+    }
+
+    const dpr = window.devicePixelRatio || 1;
+    const targetBaseScale = computeSafeRenderScale(
+      baseSize.width,
+      baseSize.height,
+      Math.min(renderZoom, 1.5),
+      dpr,
+    );
+    // Avoid re-rendering overview layer once rendered at sufficient overview quality
+    if (
+      baseScaleRef.current > 0 &&
+      Math.abs(baseScaleRef.current - targetBaseScale) < 0.05
+    ) {
       return;
     }
 
@@ -144,14 +176,8 @@ function PdfPageItem({
     pdfDoc
       .getPage(pageNumber)
       .then((page) => {
-        if (cancelled || !canvasRef.current) return;
-        const safeScale = computeSafeRenderScale(
-          baseSize.width,
-          baseSize.height,
-          renderZoom,
-          window.devicePixelRatio || 1,
-        );
-        const renderViewport = page.getViewport({ scale: safeScale });
+        if (cancelled || !baseCanvasRef.current) return;
+        const renderViewport = page.getViewport({ scale: targetBaseScale });
         offscreen = document.createElement("canvas");
         offscreen.width = Math.max(1, Math.floor(renderViewport.width));
         offscreen.height = Math.max(1, Math.floor(renderViewport.height));
@@ -166,13 +192,14 @@ function PdfPageItem({
         });
         renderTask = task;
         return task.promise.then(() => {
-          if (cancelled || !canvasRef.current || !offscreen) return;
-          const target = canvasRef.current;
+          if (cancelled || !baseCanvasRef.current || !offscreen) return;
+          const target = baseCanvasRef.current;
           target.width = offscreen.width;
           target.height = offscreen.height;
           const targetCtx = target.getContext("2d");
           if (targetCtx) {
             targetCtx.drawImage(offscreen, 0, 0);
+            baseScaleRef.current = targetBaseScale;
           }
         });
       })
@@ -202,13 +229,150 @@ function PdfPageItem({
     };
   }, [pdfDoc, pageNumber, baseSize.width, baseSize.height, renderZoom, isVisible]);
 
+  // Layer 2: Razor-sharp native-vector viewport detail tile at FULL renderZoom * dpr
+  useEffect(() => {
+    const detailCanvas = detailCanvasRef.current;
+    const wrapperEl = wrapperRef.current;
+    if (!detailCanvas || !wrapperEl || !scrollContainer || !isVisible) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const desiredScale = renderZoom * dpr;
+    const overviewScale = computeSafeRenderScale(
+      baseSize.width,
+      baseSize.height,
+      Math.min(renderZoom, 1.5),
+      dpr,
+    );
+
+    // If overview layer already covers full native resolution, no detail tile needed
+    if (desiredScale <= overviewScale * 1.05) {
+      detailCanvas.width = 0;
+      detailCanvas.height = 0;
+      setDetailTile(null);
+      return;
+    }
+
+    const crop = computeVisiblePageCrop(
+      wrapperEl.getBoundingClientRect(),
+      scrollContainer.getBoundingClientRect(),
+      160,
+    );
+    if (!crop) {
+      detailCanvas.width = 0;
+      detailCanvas.height = 0;
+      setDetailTile(null);
+      return;
+    }
+
+    // Clamp tile DPR only if the visible viewport itself is enormous (>4096px)
+    const tileDpr = Math.min(
+      dpr,
+      4096 / Math.max(1, crop.width),
+      4096 / Math.max(1, crop.height),
+      Math.sqrt(12_000_000 / Math.max(1, crop.width * crop.height)),
+    );
+
+    let cancelled = false;
+    let renderTask: { cancel: () => void; promise: Promise<void> } | null = null;
+    let offscreen: HTMLCanvasElement | null = null;
+
+    pdfDoc
+      .getPage(pageNumber)
+      .then((page) => {
+        if (cancelled || !detailCanvasRef.current) return;
+        const viewport = page.getViewport({ scale: renderZoom });
+        offscreen = document.createElement("canvas");
+        offscreen.width = Math.max(1, Math.floor(crop.width * tileDpr));
+        offscreen.height = Math.max(1, Math.floor(crop.height * tileDpr));
+
+        const offCtx = offscreen.getContext("2d");
+        if (!offCtx) return;
+
+        // Translate native PDF vector drawing directly to the visible viewport crop
+        const task = page.render({
+          canvas: offscreen,
+          canvasContext: offCtx,
+          viewport,
+          transform: [
+            tileDpr,
+            0,
+            0,
+            tileDpr,
+            -crop.x * tileDpr,
+            -crop.y * tileDpr,
+          ],
+        });
+        renderTask = task;
+        return task.promise.then(() => {
+          if (cancelled || !detailCanvasRef.current || !offscreen) return;
+          const target = detailCanvasRef.current;
+          target.width = offscreen.width;
+          target.height = offscreen.height;
+          const targetCtx = target.getContext("2d");
+          if (targetCtx) {
+            targetCtx.drawImage(offscreen, 0, 0);
+            setDetailTile({ ...crop, zoom: renderZoom });
+          }
+        });
+      })
+      .catch((err: unknown) => {
+        if (
+          err &&
+          typeof err === "object" &&
+          "name" in err &&
+          (err as { name: string }).name === "RenderingCancelledException"
+        ) {
+          return;
+        }
+      })
+      .finally(() => {
+        if (offscreen) {
+          offscreen.width = 0;
+          offscreen.height = 0;
+          offscreen = null;
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      if (renderTask) {
+        renderTask.cancel();
+      }
+    };
+  }, [
+    pdfDoc,
+    pageNumber,
+    baseSize.width,
+    baseSize.height,
+    renderZoom,
+    viewportEpoch,
+    isVisible,
+    scrollContainer,
+  ]);
+
+  const tileRatio = detailTile ? displayZoom / detailTile.zoom : 1;
+
   return (
     <div
       ref={setRefs}
       style={{ width, height }}
-      className="relative shrink-0 bg-white shadow-2xl ring-1 ring-neutral-700/80"
+      className="relative shrink-0 overflow-hidden bg-white shadow-2xl ring-1 ring-neutral-700/80"
     >
-      <canvas ref={canvasRef} className="block h-full w-full" />
+      <canvas ref={baseCanvasRef} className="block h-full w-full" />
+      <canvas
+        ref={detailCanvasRef}
+        style={
+          detailTile
+            ? {
+                left: `${detailTile.x * tileRatio}px`,
+                top: `${detailTile.y * tileRatio}px`,
+                width: `${detailTile.width * tileRatio}px`,
+                height: `${detailTile.height * tileRatio}px`,
+              }
+            : { display: "none" }
+        }
+        className="pointer-events-none absolute block"
+      />
       {drawingId && (
         <BalloonOverlay
           dimensions={dimensions}
@@ -290,6 +454,7 @@ export function PdfViewer({
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
   const [pageSizes, setPageSizes] = useState<PageDimensions[]>([]);
   const [renderError, setRenderError] = useState<string | null>(null);
+  const [viewportEpoch, setViewportEpoch] = useState<number>(0);
 
   const startSmoothZoomAnimation = useCallback(() => {
     if (zoomRafRef.current !== null) return;
@@ -511,6 +676,7 @@ export function PdfViewer({
     if (!container || pageSizes.length === 0) return;
 
     let rafId: number | null = null;
+    let settleTimer: number | null = null;
     const updateActivePage = () => {
       rafId = null;
       const containerRect = container.getBoundingClientRect();
@@ -530,16 +696,28 @@ export function PdfViewer({
       }
     };
 
+    const scheduleDetailRefresh = () => {
+      if (settleTimer !== null) window.clearTimeout(settleTimer);
+      settleTimer = window.setTimeout(() => {
+        settleTimer = null;
+        setViewportEpoch((e) => e + 1);
+      }, 100);
+    };
+
     const onScroll = () => {
       if (rafId === null) {
         rafId = window.requestAnimationFrame(updateActivePage);
       }
+      scheduleDetailRefresh();
     };
 
     container.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", scheduleDetailRefresh);
     return () => {
       container.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", scheduleDetailRefresh);
       if (rafId !== null) window.cancelAnimationFrame(rafId);
+      if (settleTimer !== null) window.clearTimeout(settleTimer);
     };
   }, [pageSizes.length, onPageChange]);
 
@@ -561,6 +739,8 @@ export function PdfViewer({
       targetZoomRef.current = computeWheelTargetZoom(
         targetZoomRef.current,
         e.deltaY,
+        0.25,
+        8,
       );
       startSmoothZoomAnimation();
     };
@@ -633,7 +813,7 @@ export function PdfViewer({
 
   const stepZoom = (delta: number) => {
     const next = Math.min(
-      4,
+      8,
       Math.max(0.25, Math.round((targetZoomRef.current + delta) * 100) / 100),
     );
     const el = containerRef.current;
@@ -704,7 +884,7 @@ export function PdfViewer({
             </span>
             <button
               type="button"
-              disabled={displayZoom >= 4}
+              disabled={displayZoom >= 8}
               onClick={() => stepZoom(0.25)}
               aria-label="Zoom in"
               className="rounded p-1 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:text-neutral-600"
@@ -774,6 +954,7 @@ export function PdfViewer({
                 baseSize={size}
                 displayZoom={displayZoom}
                 renderZoom={renderZoom}
+                viewportEpoch={viewportEpoch}
                 drawingId={drawingId}
                 dimensions={dimensions}
                 selectedDimensionId={selectedDimensionId}
