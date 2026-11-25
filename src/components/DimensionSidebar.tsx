@@ -130,7 +130,7 @@ function InlineEditCard({
       e.preventDefault();
       e.stopPropagation();
       onCancel();
-    } else if (e.key === "Enter" && !e.shiftKey) {
+    } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       e.stopPropagation();
       tryConfirm();
@@ -327,7 +327,7 @@ function InlineEditCard({
             type="button"
             tabIndex={-1}
             onClick={tryConfirm}
-            title="Confirm (Enter)"
+            title="Confirm (⌘/Ctrl+Enter)"
             className="inline-flex items-center gap-1 rounded bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-950 hover:bg-white"
           >
             <Check className="h-3.5 w-3.5" />
