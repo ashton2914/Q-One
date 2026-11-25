@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import {
   computeAnchoredScroll,
+  computeCenterRegionScroll,
   computeFitZoom,
   computeSafeRenderScale,
   computeVisiblePageCrop,
@@ -40,6 +41,7 @@ const CONTAINER_PADDING_PX = 24;
 
 export interface ScrollToPageRequest {
   page: number;
+  marker?: MarkerPosition;
   key: number;
 }
 
@@ -676,9 +678,40 @@ export function PdfViewer({
     }
   }, []);
 
-  // Respond to external scroll requests (e.g. clicking a dimension in the sidebar)
+  // Respond to external scroll requests (e.g. clicking a dimension in the sidebar -> center its region)
   useEffect(() => {
     if (!scrollToPageRequest) return;
+    const container = containerRef.current;
+    const pageEl = pageElsRef.current.get(scrollToPageRequest.page);
+    if (scrollToPageRequest.marker && container && pageEl) {
+      const containerRect = container.getBoundingClientRect();
+      const pageRect = pageEl.getBoundingClientRect();
+      const m = scrollToPageRequest.marker;
+      const target = computeCenterRegionScroll({
+        scrollLeft: container.scrollLeft,
+        scrollTop: container.scrollTop,
+        scrollWidth: container.scrollWidth,
+        scrollHeight: container.scrollHeight,
+        viewportLeft: containerRect.left,
+        viewportTop: containerRect.top,
+        viewportWidth: containerRect.width,
+        viewportHeight: containerRect.height,
+        pageLeft: pageRect.left,
+        pageTop: pageRect.top,
+        pageWidth: pageRect.width,
+        pageHeight: pageRect.height,
+        markerX: m.x,
+        markerY: m.y,
+        markerWidth: m.width || 0.04,
+        markerHeight: m.height || 0.025,
+      });
+      container.scrollTo({
+        left: target.left,
+        top: target.top,
+        behavior: "smooth",
+      });
+      return;
+    }
     scrollToPage(scrollToPageRequest.page);
   }, [scrollToPageRequest, scrollToPage]);
 

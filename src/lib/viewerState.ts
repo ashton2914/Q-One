@@ -162,3 +162,43 @@ export function computeVisiblePageCrop(
   if (width <= 0 || height <= 0) return null;
   return { x, y, width, height };
 }
+
+export interface CenterRegionScrollInput {
+  scrollLeft: number;
+  scrollTop: number;
+  scrollWidth: number;
+  scrollHeight: number;
+  viewportLeft: number;
+  viewportTop: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  pageLeft: number;
+  pageTop: number;
+  pageWidth: number;
+  pageHeight: number;
+  markerX: number;
+  markerY: number;
+  markerWidth: number;
+  markerHeight: number;
+}
+
+export function computeCenterRegionScroll(input: CenterRegionScrollInput): {
+  left: number;
+  top: number;
+} {
+  const centerX =
+    input.scrollLeft +
+    (input.pageLeft - input.viewportLeft) +
+    (input.markerX + input.markerWidth / 2) * input.pageWidth;
+  const centerY =
+    input.scrollTop +
+    (input.pageTop - input.viewportTop) +
+    (input.markerY + input.markerHeight / 2) * input.pageHeight;
+
+  const maxLeft = Math.max(0, input.scrollWidth - input.viewportWidth);
+  const maxTop = Math.max(0, input.scrollHeight - input.viewportHeight);
+
+  const left = Math.min(maxLeft, Math.max(0, centerX - input.viewportWidth / 2));
+  const top = Math.min(maxTop, Math.max(0, centerY - input.viewportHeight / 2));
+  return { left, top };
+}

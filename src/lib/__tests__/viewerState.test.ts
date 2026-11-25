@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computeAnchoredScroll,
+  computeCenterRegionScroll,
   computeFitZoom,
   computeSafeRenderScale,
   computeVisiblePageCrop,
@@ -124,5 +125,52 @@ describe("viewerState review fixes", () => {
         100,
       ),
     ).toBeNull();
+  });
+
+  it("centers a marked region in the viewport and clamps at scroll boundaries", () => {
+    // 1000x800 viewport inside 4000x3000 scrollable content; page starts at (24, 24) and is 3952x2952
+    // Region center at (0.5, 0.5) => content center (2000, 1500) => scroll (1500, 1100)
+    const centered = computeCenterRegionScroll({
+      scrollLeft: 0,
+      scrollTop: 0,
+      scrollWidth: 4000,
+      scrollHeight: 3000,
+      viewportLeft: 0,
+      viewportTop: 0,
+      viewportWidth: 1000,
+      viewportHeight: 800,
+      pageLeft: 24,
+      pageTop: 24,
+      pageWidth: 3952,
+      pageHeight: 2952,
+      markerX: 0.45,
+      markerY: 0.45,
+      markerWidth: 0.1,
+      markerHeight: 0.1,
+    });
+    expect(centered.left).toBeCloseTo(1500, 4);
+    expect(centered.top).toBeCloseTo(1100, 4);
+
+    // Near top-left edge clamps cleanly to 0; near bottom-right clamps cleanly to maxScroll
+    const topLeft = computeCenterRegionScroll({
+      scrollLeft: 500,
+      scrollTop: 500,
+      scrollWidth: 4000,
+      scrollHeight: 3000,
+      viewportLeft: 0,
+      viewportTop: 0,
+      viewportWidth: 1000,
+      viewportHeight: 800,
+      pageLeft: -476,
+      pageTop: -476,
+      pageWidth: 3952,
+      pageHeight: 2952,
+      markerX: 0.01,
+      markerY: 0.01,
+      markerWidth: 0.02,
+      markerHeight: 0.02,
+    });
+    expect(topLeft.left).toBe(0);
+    expect(topLeft.top).toBe(0);
   });
 });

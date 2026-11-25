@@ -334,12 +334,16 @@ export default function App() {
     (id: string) => {
       setSelectedDimensionId(id);
       const dim = project?.dimensions.find((d) => d.id === id);
-      if (dim?.marker && dim.marker.page !== currentPage) {
+      if (dim?.marker) {
         setCurrentPage(dim.marker.page);
-        setScrollToPageRequest({ page: dim.marker.page, key: Date.now() });
+        setScrollToPageRequest({
+          page: dim.marker.page,
+          marker: dim.marker,
+          key: Date.now(),
+        });
       }
     },
-    [project, currentPage],
+    [project],
   );
 
   const handleSelectFromDrawing = useCallback((id: string) => {
