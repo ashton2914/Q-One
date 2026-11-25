@@ -18,7 +18,6 @@ import type { Dimension } from "../types/project";
 
 export interface DimensionSidebarProps {
   dimensions: Dimension[];
-  typeHistory: string[];
   selectedDimensionId: string | null;
   editingDimensionId: string | null;
   placingDimensionId: string | null;
@@ -38,7 +37,6 @@ export interface DimensionSidebarProps {
 interface InlineEditCardProps {
   dimension: Dimension;
   allDimensions: Dimension[];
-  typeHistory: string[];
   isPlacing: boolean;
   focusNameKey: number;
   onUpdate: (id: string, patch: Partial<Dimension>) => void;
@@ -52,7 +50,6 @@ interface InlineEditCardProps {
 function InlineEditCard({
   dimension,
   allDimensions,
-  typeHistory,
   isPlacing,
   focusNameKey,
   onUpdate,
@@ -66,16 +63,9 @@ function InlineEditCard({
   const idInputRef = useRef<HTMLInputElement | null>(null);
   const [idError, setIdError] = useState<string | null>(null);
 
-  // Combine MRU history with any types already present on other dimensions in this project
+  // Derive known types strictly from active dimensions in the current project (excluding self)
   const knownTypes: string[] = [];
   const seenLower = new Set<string>();
-  for (const t of typeHistory) {
-    const trimmed = t.trim();
-    if (trimmed && !seenLower.has(trimmed.toLowerCase())) {
-      seenLower.add(trimmed.toLowerCase());
-      knownTypes.push(trimmed);
-    }
-  }
   for (const d of allDimensions) {
     if (d.id === dimension.id) continue;
     const trimmed = (d.dimensionType ?? "").trim();
@@ -345,7 +335,6 @@ function InlineEditCard({
 
 export function DimensionSidebar({
   dimensions,
-  typeHistory,
   selectedDimensionId,
   editingDimensionId,
   placingDimensionId,
@@ -411,7 +400,6 @@ export function DimensionSidebar({
                         <InlineEditCard
                           dimension={dim}
                           allDimensions={dimensions}
-                          typeHistory={typeHistory}
                           isPlacing={isPlacing}
                           focusNameKey={focusNameKey}
                           onUpdate={onUpdateDimension}

@@ -8,7 +8,6 @@ import { PdfViewer, type ScrollToPageRequest } from "./components/PdfViewer";
 import {
   createDimension,
   createProjectFromPdf,
-  rememberDimensionType,
   validateDimensionId,
 } from "./lib/dimensions";
 import {
@@ -30,24 +29,8 @@ interface StatusMessage {
   text: string;
 }
 
-const TYPE_HISTORY_STORAGE_KEY = "dm-one.dimensionTypes.v1";
-
-function loadStoredTypeHistory(): string[] {
-  try {
-    const raw = window.localStorage.getItem(TYPE_HISTORY_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed)
-      ? parsed.filter((v): v is string => typeof v === "string" && v.trim().length > 0)
-      : [];
-  } catch {
-    return [];
-  }
-}
-
 export default function App() {
   const [project, setProject] = useState<ProjectData | null>(null);
-  const [typeHistory, setTypeHistory] = useState<string[]>(loadStoredTypeHistory);
   const [projectFilePath, setProjectFilePath] = useState<string | null>(null);
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -139,23 +122,6 @@ export default function App() {
       if (!path) return;
       const opened = await openProject(path);
       setProject(opened.project);
-      setTypeHistory((prev) => {
-        let next = prev;
-        for (const dim of opened.project.dimensions) {
-          if (dim.dimensionType?.trim()) {
-            next = rememberDimensionType(next, dim.dimensionType);
-          }
-        }
-        try {
-          window.localStorage.setItem(
-            TYPE_HISTORY_STORAGE_KEY,
-            JSON.stringify(next),
-          );
-        } catch {
-          // ignore storage errors
-        }
-        return next;
-      });
       setProjectFilePath(path);
       setPdfBytes(opened.pdfBytes);
       setCurrentPage(1);
@@ -335,21 +301,6 @@ export default function App() {
                 }
               : prev,
           );
-        }
-
-        if (trimmedType) {
-          setTypeHistory((prev) => {
-            const next = rememberDimensionType(prev, trimmedType);
-            try {
-              window.localStorage.setItem(
-                TYPE_HISTORY_STORAGE_KEY,
-                JSON.stringify(next),
-              );
-            } catch {
-              // ignore storage errors
-            }
-            return next;
-          });
         }
       }
     }
@@ -569,7 +520,6 @@ export default function App() {
         <aside className="flex w-80 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950">
           <DimensionSidebar
             dimensions={project?.dimensions ?? []}
-            typeHistory={typeHistory}
             selectedDimensionId={selectedDimensionId}
             editingDimensionId={editingDimensionId}
             placingDimensionId={placingDimensionId}
