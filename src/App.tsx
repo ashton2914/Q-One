@@ -167,8 +167,17 @@ export default function App() {
     try {
       const path = await pickPdfFile();
       if (!path) return;
-      await clearDrawings();
+      const previousDrawingIds = project?.drawings.map((d) => d.id) ?? [];
       const imported = await importPdf(path);
+      for (const oldId of previousDrawingIds) {
+        if (oldId !== imported.drawingId) {
+          try {
+            await removeDrawingBytes(oldId);
+          } catch {
+            // ignore
+          }
+        }
+      }
       const nextProject = createProjectFromPdf(
         imported.drawingId,
         imported.filename,
@@ -190,7 +199,7 @@ export default function App() {
     } catch (err) {
       showStatus("error", err instanceof Error ? err.message : String(err));
     }
-  }, [confirmDiscardIfDirty, showStatus]);
+  }, [project, confirmDiscardIfDirty, showStatus]);
 
   const handleOpenProject = useCallback(async () => {
     if (!confirmDiscardIfDirty()) return;
@@ -510,9 +519,44 @@ export default function App() {
     [project, activeDrawingId, markDirty],
   );
 
+  const handleCancelEditing = useCallback(() => {
+    const origin = editingOriginRef.current;
+    editingOriginRef.current = null;
+    if (origin) {
+      if (origin.isNew) {
+        setProject((prev) =>
+          prev
+            ? {
+                ...prev,
+                dimensions: prev.dimensions.filter((d) => d.id !== origin.id),
+              }
+            : prev,
+        );
+        setSelectedDimensionId((prev) => (prev === origin.id ? null : prev));
+      } else if (origin.snapshot) {
+        const snap = origin.snapshot;
+        setProject((prev) =>
+          prev
+            ? {
+                ...prev,
+                dimensions: prev.dimensions.map((d) =>
+                  d.id === origin.id ? snap : d,
+                ),
+              }
+            : prev,
+        );
+      }
+    }
+    setEditingDimensionId(null);
+    setPlacingDimensionId(null);
+  }, []);
+
   const handleOpenDrawing = useCallback(
     async (drawingId: string) => {
       if (!project) return;
+      if (editingDimensionId) {
+        handleCancelEditing();
+      }
       try {
         if (drawingId !== activeDrawingId || !pdfBytes) {
           const bytes = await getDrawingBytes(drawingId);
@@ -520,7 +564,6 @@ export default function App() {
           setPdfBytes(bytes);
           setCurrentPage(1);
           setSelectedDimensionId(null);
-          setEditingDimensionId(null);
           setPlacingDimensionId(null);
           setFitRequestKey((k) => k + 1);
         }
@@ -529,7 +572,24 @@ export default function App() {
         showStatus("error", err instanceof Error ? err.message : String(err));
       }
     },
-    [project, activeDrawingId, pdfBytes, showStatus],
+    [
+      project,
+      editingDimensionId,
+      handleCancelEditing,
+      activeDrawingId,
+      pdfBytes,
+      showStatus,
+    ],
+  );
+
+  const handleSelectModule = useCallback(
+    (module: ActiveModule) => {
+      if (module !== "drawing" && editingDimensionId) {
+        handleCancelEditing();
+      }
+      setActiveModule(module);
+    },
+    [editingDimensionId, handleCancelEditing],
   );
 
   // Drawing / Dimension handlers
@@ -621,38 +681,6 @@ export default function App() {
     setEditingDimensionId(null);
     setPlacingDimensionId(null);
   }, [editingDimensionId, project, activeDrawingDimensions]);
-
-  const handleCancelEditing = useCallback(() => {
-    const origin = editingOriginRef.current;
-    editingOriginRef.current = null;
-    if (origin) {
-      if (origin.isNew) {
-        setProject((prev) =>
-          prev
-            ? {
-                ...prev,
-                dimensions: prev.dimensions.filter((d) => d.id !== origin.id),
-              }
-            : prev,
-        );
-        setSelectedDimensionId((prev) => (prev === origin.id ? null : prev));
-      } else if (origin.snapshot) {
-        const snap = origin.snapshot;
-        setProject((prev) =>
-          prev
-            ? {
-                ...prev,
-                dimensions: prev.dimensions.map((d) =>
-                  d.id === origin.id ? snap : d,
-                ),
-              }
-            : prev,
-        );
-      }
-    }
-    setEditingDimensionId(null);
-    setPlacingDimensionId(null);
-  }, []);
 
   // Global keyboard shortcuts: Esc cancels editing/placement, Cmd/Ctrl+S saves
   useEffect(() => {
@@ -835,7 +863,7 @@ export default function App() {
       <div className="flex min-h-0 flex-1">
         <ActivityBar
           activeModule={activeModule}
-          onSelectModule={setActiveModule}
+          onSelectModule={handleSelectModule}
           hasActiveDrawing={activeDrawingId !== null}
         />
 
