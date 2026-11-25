@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Check,
   Crosshair,
@@ -9,7 +9,11 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { findTypeCompletion, formatTolerance } from "../lib/dimensions";
+import {
+  findTypeCompletion,
+  formatTolerance,
+  validateDimensionId,
+} from "../lib/dimensions";
 import type { Dimension } from "../types/project";
 
 export interface DimensionSidebarProps {
@@ -33,6 +37,7 @@ export interface DimensionSidebarProps {
 
 interface InlineEditCardProps {
   dimension: Dimension;
+  allDimensions: Dimension[];
   typeHistory: string[];
   isPlacing: boolean;
   focusNameKey: number;
@@ -46,6 +51,7 @@ interface InlineEditCardProps {
 
 function InlineEditCard({
   dimension,
+  allDimensions,
   typeHistory,
   isPlacing,
   focusNameKey,
@@ -57,9 +63,11 @@ function InlineEditCard({
   onClearMarker,
 }: InlineEditCardProps) {
   const typeInputRef = useRef<HTMLInputElement | null>(null);
+  const idInputRef = useRef<HTMLInputElement | null>(null);
   const lastTypeInputLenRef = useRef<number>(
     (dimension.dimensionType ?? "").length,
   );
+  const [idError, setIdError] = useState<string | null>(null);
 
   useEffect(() => {
     const input = typeInputRef.current;
@@ -68,6 +76,18 @@ function InlineEditCard({
     const len = input.value.length;
     input.setSelectionRange(len, len);
   }, [dimension.id, focusNameKey]);
+
+  const tryConfirm = () => {
+    const err = validateDimensionId(dimension.name, dimension.id, allDimensions);
+    if (err) {
+      setIdError(err);
+      idInputRef.current?.focus();
+      idInputRef.current?.select();
+      return;
+    }
+    setIdError(null);
+    onDone();
+  };
 
   const handleTypeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value;
@@ -105,7 +125,7 @@ function InlineEditCard({
     } else if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       e.stopPropagation();
-      onDone();
+      tryConfirm();
     }
   };
 
@@ -115,14 +135,9 @@ function InlineEditCard({
       className="rounded-lg border border-neutral-600 bg-neutral-900 p-3 shadow-lg"
     >
       <div className="mb-2.5 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-[11px] font-bold text-white">
-            {dimension.balloonNumber}
-          </span>
-          <span className="text-xs font-semibold text-neutral-100">
-            Dimension #{dimension.balloonNumber}
-          </span>
-        </div>
+        <span className="truncate text-xs font-semibold text-neutral-100">
+          {dimension.name.trim() ? `ID: ${dimension.name.trim()}` : "New Dimension"}
+        </span>
 
         <div className="flex items-center gap-1">
           <button
@@ -172,17 +187,29 @@ function InlineEditCard({
 
           <div>
             <label className="mb-1 block text-[11px] text-neutral-400">
-              Name
+              ID <span className="text-rose-400">*</span>
             </label>
             <input
+              ref={idInputRef}
               type="text"
               value={dimension.name}
-              placeholder="e.g. 104 / Outer Dia"
-              onChange={(e) => onUpdate(dimension.id, { name: e.target.value })}
-              className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
+              placeholder="e.g. 104, 512A"
+              onChange={(e) => {
+                if (idError) setIdError(null);
+                onUpdate(dimension.id, { name: e.target.value });
+              }}
+              className={`w-full rounded border bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-100 placeholder:text-neutral-600 focus:outline-none ${
+                idError
+                  ? "border-rose-500 focus:border-rose-400"
+                  : "border-neutral-700 focus:border-neutral-400"
+              }`}
             />
           </div>
         </div>
+
+        {idError && (
+          <p className="text-[11px] text-rose-400">{idError}</p>
+        )}
 
         <div className="grid grid-cols-3 gap-1.5">
           <div>
@@ -271,7 +298,7 @@ function InlineEditCard({
           <button
             type="button"
             tabIndex={-1}
-            onClick={onDone}
+            onClick={tryConfirm}
             title="Confirm (Enter)"
             className="inline-flex items-center gap-1 rounded bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-950 hover:bg-white"
           >
@@ -351,6 +378,7 @@ export function DimensionSidebar({
                       <li key={dim.id}>
                         <InlineEditCard
                           dimension={dim}
+                          allDimensions={dimensions}
                           typeHistory={typeHistory}
                           isPlacing={isPlacing}
                           focusNameKey={focusNameKey}
@@ -386,66 +414,54 @@ export function DimensionSidebar({
                             : "border-neutral-800/80 bg-neutral-900/60 text-neutral-300 hover:border-neutral-700 hover:bg-neutral-800/60"
                         }`}
                       >
-                        <div className="flex min-w-0 items-start gap-2.5">
-                          <span
-                            className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
-                              isSelected
-                                ? "bg-blue-600 text-white"
-                                : "bg-rose-600/90 text-white"
-                            }`}
-                          >
-                            {dim.balloonNumber}
-                          </span>
-
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              {dim.dimensionType?.trim() && (
-                                <span className="shrink-0 rounded bg-neutral-800 px-1.5 py-[1px] font-mono text-[10px] font-medium text-neutral-300 ring-1 ring-neutral-700/80">
-                                  {dim.dimensionType.trim()}
-                                </span>
-                              )}
-                              <span className="truncate text-xs font-medium text-neutral-100">
-                                {dim.name.trim() || "Untitled Dimension"}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            {dim.dimensionType?.trim() && (
+                              <span className="shrink-0 rounded bg-neutral-800 px-1.5 py-[1px] font-mono text-[10px] font-medium text-neutral-300 ring-1 ring-neutral-700/80">
+                                {dim.dimensionType.trim()}
                               </span>
-                            </div>
-                            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-neutral-400">
-                              {dim.nominal.trim() ? (
-                                <span className="font-mono text-neutral-300">
-                                  {dim.nominal.trim()}
-                                  {tol ? ` ${tol}` : ""} {dim.unit}
-                                </span>
-                              ) : (
-                                <span className="italic text-neutral-500">
-                                  No nominal
-                                </span>
-                              )}
+                            )}
+                            <span className="truncate font-mono text-xs font-semibold text-neutral-100">
+                              {dim.name.trim() || "—"}
+                            </span>
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-neutral-400">
+                            {dim.nominal.trim() ? (
+                              <span className="font-mono text-neutral-300">
+                                {dim.nominal.trim()}
+                                {tol ? ` ${tol}` : ""} {dim.unit}
+                              </span>
+                            ) : (
+                              <span className="italic text-neutral-500">
+                                No nominal
+                              </span>
+                            )}
 
-                              {isPlacing ? (
-                                <span className="text-blue-400">Placing…</span>
-                              ) : dim.marker ? (
-                                <span className="inline-flex items-center gap-0.5 text-emerald-400">
-                                  <MapPin className="h-3 w-3" />P
-                                  {dim.marker.page}
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-0.5 text-amber-400/90">
-                                  <MapPinOff className="h-3 w-3" />
-                                  Unplaced
-                                </span>
-                              )}
-                            </div>
-                            {dim.notes.trim() && (
-                              <div className="mt-1 line-clamp-1 text-[11px] text-neutral-500">
-                                {dim.notes.trim()}
-                              </div>
+                            {isPlacing ? (
+                              <span className="text-blue-400">Marking…</span>
+                            ) : dim.marker ? (
+                              <span className="inline-flex items-center gap-0.5 text-emerald-400">
+                                <MapPin className="h-3 w-3" />P
+                                {dim.marker.page}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-0.5 text-amber-400/90">
+                                <MapPinOff className="h-3 w-3" />
+                                Unmarked
+                              </span>
                             )}
                           </div>
+                          {dim.notes.trim() && (
+                            <div className="mt-1 line-clamp-1 text-[11px] text-neutral-500">
+                              {dim.notes.trim()}
+                            </div>
+                          )}
                         </div>
 
                         <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                           <button
                             type="button"
-                            aria-label={`Edit dimension ${dim.balloonNumber}`}
+                            aria-label={`Edit dimension ${dim.name || dim.id}`}
                             title="Edit dimension"
                             onClick={(e) => {
                               e.stopPropagation();
@@ -457,7 +473,7 @@ export function DimensionSidebar({
                           </button>
                           <button
                             type="button"
-                            aria-label={`Delete dimension ${dim.balloonNumber}`}
+                            aria-label={`Delete dimension ${dim.name || dim.id}`}
                             title="Delete dimension"
                             onClick={(e) => {
                               e.stopPropagation();

@@ -9,6 +9,7 @@ import {
   createDimension,
   createProjectFromPdf,
   rememberDimensionType,
+  validateDimensionId,
 } from "./lib/dimensions";
 import {
   shouldBlockWindowClose,
@@ -308,19 +309,48 @@ export default function App() {
       const currentDim = project.dimensions.find(
         (d) => d.id === editingDimensionId,
       );
-      if (currentDim?.dimensionType?.trim()) {
-        setTypeHistory((prev) => {
-          const next = rememberDimensionType(prev, currentDim.dimensionType);
-          try {
-            window.localStorage.setItem(
-              TYPE_HISTORY_STORAGE_KEY,
-              JSON.stringify(next),
-            );
-          } catch {
-            // ignore storage errors
-          }
-          return next;
-        });
+      if (currentDim) {
+        const idErr = validateDimensionId(
+          currentDim.name,
+          currentDim.id,
+          project.dimensions,
+        );
+        if (idErr) return;
+
+        const trimmedName = currentDim.name.trim();
+        const trimmedType = (currentDim.dimensionType ?? "").trim();
+        if (
+          trimmedName !== currentDim.name ||
+          trimmedType !== (currentDim.dimensionType ?? "")
+        ) {
+          setProject((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  dimensions: prev.dimensions.map((d) =>
+                    d.id === currentDim.id
+                      ? { ...d, name: trimmedName, dimensionType: trimmedType }
+                      : d,
+                  ),
+                }
+              : prev,
+          );
+        }
+
+        if (trimmedType) {
+          setTypeHistory((prev) => {
+            const next = rememberDimensionType(prev, trimmedType);
+            try {
+              window.localStorage.setItem(
+                TYPE_HISTORY_STORAGE_KEY,
+                JSON.stringify(next),
+              );
+            } catch {
+              // ignore storage errors
+            }
+            return next;
+          });
+        }
       }
     }
     editingOriginRef.current = null;

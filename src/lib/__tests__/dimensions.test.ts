@@ -6,6 +6,7 @@ import {
   formatTolerance,
   nextBalloonNumber,
   rememberDimensionType,
+  validateDimensionId,
 } from "../dimensions";
 import type { Dimension } from "../../types/project";
 
@@ -89,5 +90,51 @@ describe("dimensions", () => {
     expect(findTypeCompletion("CTQ", history)).toBe("CTQ");
     expect(findTypeCompletion("z", history)).toBeNull();
     expect(findTypeCompletion("", history)).toBeNull();
+  });
+
+  it("validates Dimension ID is required and unique (case-insensitive)", () => {
+    const existing: Dimension[] = [
+      {
+        id: "uuid-1",
+        balloonNumber: 1,
+        dimensionType: "CTQ",
+        name: "103",
+        nominal: "210.21",
+        upperTol: "0.10",
+        lowerTol: "0.10",
+        unit: "mm",
+        notes: "",
+        marker: null,
+      },
+      {
+        id: "uuid-2",
+        balloonNumber: 2,
+        dimensionType: "CTQ",
+        name: "512A",
+        nominal: "10.00",
+        upperTol: "0.05",
+        lowerTol: "0.05",
+        unit: "mm",
+        notes: "",
+        marker: null,
+      },
+    ];
+
+    expect(validateDimensionId("", "uuid-new", existing)).toBe(
+      "Dimension ID is required.",
+    );
+    expect(validateDimensionId("   ", "uuid-new", existing)).toBe(
+      "Dimension ID is required.",
+    );
+    expect(validateDimensionId("103", "uuid-new", existing)).toContain(
+      "already exists",
+    );
+    expect(validateDimensionId("512a", "uuid-new", existing)).toContain(
+      "already exists",
+    );
+    // Same dimension keeping its own ID is valid
+    expect(validateDimensionId("512A", "uuid-2", existing)).toBeNull();
+    // Brand new unique ID is valid
+    expect(validateDimensionId("104", "uuid-new", existing)).toBeNull();
   });
 });

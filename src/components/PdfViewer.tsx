@@ -993,8 +993,11 @@ export function PdfViewer({
           <div className="flex items-center gap-2">
             <Crosshair className="h-4 w-4 text-blue-400" />
             <span>
-              Drag on the drawing to box #{placingDimension.balloonNumber}
-              {placingDimension.name ? ` (${placingDimension.name})` : ""} — Press Esc to cancel
+              Drag on the drawing to box{" "}
+              {placingDimension.name.trim()
+                ? `ID "${placingDimension.name.trim()}"`
+                : "new dimension"}{" "}
+              — Press Esc to cancel
             </span>
           </div>
           <button

@@ -62,6 +62,25 @@ export function findTypeCompletion(
   return null;
 }
 
+export function validateDimensionId(
+  idText: string,
+  editingInternalId: string,
+  dimensions: readonly Dimension[],
+): string | null {
+  const trimmed = idText.trim();
+  if (!trimmed) {
+    return "Dimension ID is required.";
+  }
+  const lower = trimmed.toLowerCase();
+  const duplicate = dimensions.find(
+    (d) => d.id !== editingInternalId && d.name.trim().toLowerCase() === lower,
+  );
+  if (duplicate) {
+    return `Dimension ID "${trimmed}" already exists.`;
+  }
+  return null;
+}
+
 export function formatTolerance(upperTol: string, lowerTol: string): string {
   const upper = upperTol.trim();
   const lower = lowerTol.trim();

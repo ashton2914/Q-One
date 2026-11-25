@@ -324,11 +324,11 @@ export function BalloonOverlay({
         const boxH = Math.max(10, mh * height);
         const isSelected = dim.id === selectedDimensionId;
         const isEditing = dim.id === editingDimensionId;
-        const label = dim.name.trim() || `#${dim.balloonNumber}`;
+        const label = dim.name.trim() || "New";
         const tol = formatTolerance(dim.upperTol, dim.lowerTol);
         const tooltip = [
-          `#${dim.balloonNumber}`,
-          dim.name || "Untitled Dimension",
+          dim.dimensionType?.trim(),
+          dim.name.trim() || "New Dimension",
           dim.nominal ? `${dim.nominal}${tol ? ` ${tol}` : ""} ${dim.unit}` : "",
         ]
           .filter(Boolean)
