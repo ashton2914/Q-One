@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   GlobalWorkerOptions,
   getDocument,
@@ -15,7 +21,9 @@ import {
   ZoomOut,
 } from "lucide-react";
 import {
+  computeAnchoredScroll,
   computeFitZoom,
+  computeWheelTargetZoom,
   findMostVisiblePage,
   shouldApplyFit,
   type PageDimensions,
@@ -24,6 +32,8 @@ import { BalloonOverlay } from "./BalloonOverlay";
 import type { Dimension, MarkerPosition } from "../types/project";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+
+const CONTAINER_PADDING_PX = 24;
 
 export interface ScrollToPageRequest {
   page: number;
@@ -56,7 +66,8 @@ interface PdfPageItemProps {
   pdfDoc: PDFDocumentProxy;
   pageNumber: number;
   baseSize: PageDimensions;
-  zoom: number;
+  displayZoom: number;
+  renderZoom: number;
   drawingId: string | null;
   dimensions: Dimension[];
   selectedDimensionId: string | null;
@@ -72,7 +83,8 @@ function PdfPageItem({
   pdfDoc,
   pageNumber,
   baseSize,
-  zoom,
+  displayZoom,
+  renderZoom,
   drawingId,
   dimensions,
   selectedDimensionId,
@@ -87,8 +99,8 @@ function PdfPageItem({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isVisible, setIsVisible] = useState<boolean>(pageNumber <= 2);
 
-  const width = Math.max(1, Math.round(baseSize.width * zoom));
-  const height = Math.max(1, Math.round(baseSize.height * zoom));
+  const width = Math.max(1, Math.round(baseSize.width * displayZoom));
+  const height = Math.max(1, Math.round(baseSize.height * displayZoom));
 
   const setRefs = useCallback(
     (el: HTMLDivElement | null) => {
@@ -125,7 +137,7 @@ function PdfPageItem({
       .getPage(pageNumber)
       .then((page) => {
         if (cancelled || !canvasRef.current) return;
-        const viewport = page.getViewport({ scale: zoom });
+        const viewport = page.getViewport({ scale: renderZoom });
         const dpr = window.devicePixelRatio || 1;
         const canvas = canvasRef.current;
         const context = canvas.getContext("2d");
@@ -133,8 +145,6 @@ function PdfPageItem({
 
         canvas.width = Math.floor(viewport.width * dpr);
         canvas.height = Math.floor(viewport.height * dpr);
-        canvas.style.width = `${viewport.width}px`;
-        canvas.style.height = `${viewport.height}px`;
 
         context.setTransform(dpr, 0, 0, dpr, 0, 0);
         const task = page.render({ canvas, canvasContext: context, viewport });
@@ -158,7 +168,7 @@ function PdfPageItem({
         renderTask.cancel();
       }
     };
-  }, [pdfDoc, pageNumber, zoom, isVisible]);
+  }, [pdfDoc, pageNumber, renderZoom, isVisible]);
 
   return (
     <div
@@ -166,7 +176,7 @@ function PdfPageItem({
       style={{ width, height }}
       className="relative shrink-0 bg-white shadow-2xl ring-1 ring-neutral-700/80"
     >
-      <canvas ref={canvasRef} className="block" />
+      <canvas ref={canvasRef} className="block h-full w-full" />
       {drawingId && (
         <BalloonOverlay
           dimensions={dimensions}
@@ -183,6 +193,24 @@ function PdfPageItem({
       )}
     </div>
   );
+}
+
+interface ZoomAnchor {
+  cursorX: number;
+  cursorY: number;
+  prevZoom: number;
+  prevScrollLeft: number;
+  prevScrollTop: number;
+}
+
+interface PanState {
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  startScrollLeft: number;
+  startScrollTop: number;
+  targetScrollLeft: number;
+  targetScrollTop: number;
 }
 
 export function PdfViewer({
@@ -209,14 +237,134 @@ export function PdfViewer({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const pageElsRef = useRef<Map<number, HTMLDivElement>>(new Map());
   const appliedFitKeyRef = useRef<number>(0);
-  const zoomRef = useRef<number>(zoom);
-  zoomRef.current = zoom;
   const currentPageRef = useRef<number>(currentPage);
   currentPageRef.current = currentPage;
+
+  // Smooth zoom state: targetZoom -> displayZoom (60fps rAF) -> renderZoom (debounced HiDPI)
+  const [displayZoom, setDisplayZoom] = useState<number>(zoom);
+  const [renderZoom, setRenderZoom] = useState<number>(zoom);
+  const displayZoomRef = useRef<number>(zoom);
+  displayZoomRef.current = displayZoom;
+  const targetZoomRef = useRef<number>(zoom);
+  const zoomRafRef = useRef<number | null>(null);
+  const zoomAnchorRef = useRef<ZoomAnchor | null>(null);
+  const pendingAnchorScrollRef = useRef<ZoomAnchor | null>(null);
+
+  // Smooth drag-pan state
+  const [isPanning, setIsPanning] = useState<boolean>(false);
+  const panRef = useRef<PanState | null>(null);
+  const panRafRef = useRef<number | null>(null);
 
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
   const [pageSizes, setPageSizes] = useState<PageDimensions[]>([]);
   const [renderError, setRenderError] = useState<string | null>(null);
+
+  const startSmoothZoomAnimation = useCallback(() => {
+    if (zoomRafRef.current !== null) return;
+
+    const step = () => {
+      const current = displayZoomRef.current;
+      const target = targetZoomRef.current;
+      const diff = target - current;
+
+      if (Math.abs(diff) < 0.002) {
+        zoomRafRef.current = null;
+        if (current !== target) {
+          const container = containerRef.current;
+          if (container && zoomAnchorRef.current) {
+            pendingAnchorScrollRef.current = {
+              ...zoomAnchorRef.current,
+              prevZoom: current,
+              prevScrollLeft: container.scrollLeft,
+              prevScrollTop: container.scrollTop,
+            };
+          }
+          displayZoomRef.current = target;
+          setDisplayZoom(target);
+        }
+        const rounded = Math.round(target * 100) / 100;
+        onZoomChange(rounded);
+        return;
+      }
+
+      const next = current + diff * 0.28;
+      const container = containerRef.current;
+      if (container && zoomAnchorRef.current) {
+        pendingAnchorScrollRef.current = {
+          ...zoomAnchorRef.current,
+          prevZoom: current,
+          prevScrollLeft: container.scrollLeft,
+          prevScrollTop: container.scrollTop,
+        };
+      }
+      displayZoomRef.current = next;
+      setDisplayZoom(next);
+      zoomRafRef.current = window.requestAnimationFrame(step);
+    };
+
+    zoomRafRef.current = window.requestAnimationFrame(step);
+  }, [onZoomChange]);
+
+  // Sync external zoom changes (Fit / +/- buttons) smoothly
+  useEffect(() => {
+    if (Math.abs(zoom - targetZoomRef.current) < 0.005) return;
+    targetZoomRef.current = zoom;
+    const container = containerRef.current;
+    if (container) {
+      const rect = container.getBoundingClientRect();
+      zoomAnchorRef.current = {
+        cursorX: rect.width / 2,
+        cursorY: rect.height / 2,
+        prevZoom: displayZoomRef.current,
+        prevScrollLeft: container.scrollLeft,
+        prevScrollTop: container.scrollTop,
+      };
+    }
+    startSmoothZoomAnimation();
+  }, [zoom, startSmoothZoomAnimation]);
+
+  // Apply cursor-anchored scroll immediately after displayZoom layout update (zero jitter)
+  useLayoutEffect(() => {
+    const anchor = pendingAnchorScrollRef.current;
+    const container = containerRef.current;
+    if (!anchor || !container) return;
+    pendingAnchorScrollRef.current = null;
+
+    container.scrollLeft = computeAnchoredScroll(
+      anchor.prevScrollLeft,
+      anchor.cursorX,
+      CONTAINER_PADDING_PX,
+      anchor.prevZoom,
+      displayZoom,
+    );
+    container.scrollTop = computeAnchoredScroll(
+      anchor.prevScrollTop,
+      anchor.cursorY,
+      CONTAINER_PADDING_PX,
+      anchor.prevZoom,
+      displayZoom,
+    );
+  }, [displayZoom]);
+
+  // Debounce crisp HiDPI canvas re-render until smooth zoom settles
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setRenderZoom(displayZoom);
+    }, 140);
+    return () => window.clearTimeout(timer);
+  }, [displayZoom]);
+
+  // Clean up animation frames on unmount
+  useEffect(() => {
+    return () => {
+      if (zoomRafRef.current !== null) {
+        window.cancelAnimationFrame(zoomRafRef.current);
+      }
+      if (panRafRef.current !== null) {
+        window.cancelAnimationFrame(panRafRef.current);
+      }
+    };
+  }, []);
 
   const registerPageEl = useCallback(
     (page: number, el: HTMLDivElement | null) => {
@@ -305,6 +453,10 @@ export function PdfViewer({
       firstPageSize!.height,
     );
     appliedFitKeyRef.current = fitRequestKey;
+    targetZoomRef.current = clamped;
+    displayZoomRef.current = clamped;
+    setDisplayZoom(clamped);
+    setRenderZoom(clamped);
     onZoomChange(clamped);
   }, [fitRequestKey, firstPageSize, onZoomChange]);
 
@@ -359,24 +511,88 @@ export function PdfViewer({
     };
   }, [pageSizes.length, onPageChange]);
 
-  // Non-passive native wheel listener for Ctrl/Cmd + wheel zoom
+  // Non-passive native wheel listener: smooth cursor-anchored zoom with gentle sensitivity
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const handleWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
-      const delta = e.deltaY < 0 ? 0.15 : -0.15;
-      const next = Math.min(
-        4,
-        Math.max(0.25, Math.round((zoomRef.current + delta) * 100) / 100),
+      const rect = el.getBoundingClientRect();
+      zoomAnchorRef.current = {
+        cursorX: e.clientX - rect.left,
+        cursorY: e.clientY - rect.top,
+        prevZoom: displayZoomRef.current,
+        prevScrollLeft: el.scrollLeft,
+        prevScrollTop: el.scrollTop,
+      };
+      targetZoomRef.current = computeWheelTargetZoom(
+        targetZoomRef.current,
+        e.deltaY,
       );
-      zoomRef.current = next;
-      onZoomChange(next);
+      startSmoothZoomAnimation();
     };
     el.addEventListener("wheel", handleWheel, { passive: false });
     return () => el.removeEventListener("wheel", handleWheel);
-  }, [onZoomChange]);
+  }, [startSmoothZoomAnimation]);
+
+  // Smooth click-and-drag panning on the PDF viewport
+  const runSmoothPan = useCallback(() => {
+    panRafRef.current = null;
+    const pan = panRef.current;
+    const el = containerRef.current;
+    if (!pan || !el) return;
+
+    const dx = pan.targetScrollLeft - el.scrollLeft;
+    const dy = pan.targetScrollTop - el.scrollTop;
+
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) {
+      el.scrollLeft = pan.targetScrollLeft;
+      el.scrollTop = pan.targetScrollTop;
+      return;
+    }
+
+    el.scrollLeft += dx * 0.45;
+    el.scrollTop += dy * 0.45;
+    panRafRef.current = window.requestAnimationFrame(runSmoothPan);
+  }, []);
+
+  const handleViewportPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || placingDimensionId || !containerRef.current) return;
+    const el = containerRef.current;
+    el.setPointerCapture(e.pointerId);
+    panRef.current = {
+      pointerId: e.pointerId,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startScrollLeft: el.scrollLeft,
+      startScrollTop: el.scrollTop,
+      targetScrollLeft: el.scrollLeft,
+      targetScrollTop: el.scrollTop,
+    };
+    setIsPanning(true);
+  };
+
+  const handleViewportPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const pan = panRef.current;
+    if (!pan || pan.pointerId !== e.pointerId) return;
+    const dx = e.clientX - pan.startClientX;
+    const dy = e.clientY - pan.startClientY;
+    pan.targetScrollLeft = Math.max(0, pan.startScrollLeft - dx);
+    pan.targetScrollTop = Math.max(0, pan.startScrollTop - dy);
+    if (panRafRef.current === null) {
+      panRafRef.current = window.requestAnimationFrame(runSmoothPan);
+    }
+  };
+
+  const stopPanning = (e: React.PointerEvent<HTMLDivElement>) => {
+    const pan = panRef.current;
+    if (!pan || pan.pointerId !== e.pointerId) return;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    panRef.current = null;
+    setIsPanning(false);
+  };
 
   const placingDimension = placingDimensionId
     ? dimensions.find((d) => d.id === placingDimensionId) ?? null
@@ -385,9 +601,21 @@ export function PdfViewer({
   const stepZoom = (delta: number) => {
     const next = Math.min(
       4,
-      Math.max(0.25, Math.round((zoom + delta) * 100) / 100),
+      Math.max(0.25, Math.round((targetZoomRef.current + delta) * 100) / 100),
     );
-    onZoomChange(next);
+    const el = containerRef.current;
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      zoomAnchorRef.current = {
+        cursorX: rect.width / 2,
+        cursorY: rect.height / 2,
+        prevZoom: displayZoomRef.current,
+        prevScrollLeft: el.scrollLeft,
+        prevScrollTop: el.scrollTop,
+      };
+    }
+    targetZoomRef.current = next;
+    startSmoothZoomAnimation();
   };
 
   const handleJumpPage = (targetPage: number) => {
@@ -431,7 +659,7 @@ export function PdfViewer({
           <div className="flex items-center gap-1 rounded bg-neutral-900 px-1 py-0.5 ring-1 ring-neutral-800">
             <button
               type="button"
-              disabled={zoom <= 0.25}
+              disabled={displayZoom <= 0.25}
               onClick={() => stepZoom(-0.25)}
               aria-label="Zoom out"
               className="rounded p-1 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:text-neutral-600"
@@ -439,11 +667,11 @@ export function PdfViewer({
               <ZoomOut className="h-3.5 w-3.5" />
             </button>
             <span className="min-w-[44px] text-center font-mono text-[11px] text-neutral-300">
-              {Math.round(zoom * 100)}%
+              {Math.round(displayZoom * 100)}%
             </span>
             <button
               type="button"
-              disabled={zoom >= 4}
+              disabled={displayZoom >= 4}
               onClick={() => stepZoom(0.25)}
               aria-label="Zoom in"
               className="rounded p-1 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:text-neutral-600"
@@ -489,7 +717,20 @@ export function PdfViewer({
         </div>
       )}
 
-      <div ref={containerRef} className="flex-1 overflow-auto p-6">
+      <div
+        ref={containerRef}
+        onPointerDown={handleViewportPointerDown}
+        onPointerMove={handleViewportPointerMove}
+        onPointerUp={stopPanning}
+        onPointerCancel={stopPanning}
+        className={`flex-1 overflow-auto p-6 select-none ${
+          placingDimensionId
+            ? "cursor-crosshair"
+            : isPanning
+              ? "cursor-grabbing"
+              : "cursor-grab"
+        }`}
+      >
         <div className="mx-auto flex w-fit flex-col items-center gap-6">
           {pdfDoc &&
             pageSizes.map((size, idx) => (
@@ -498,7 +739,8 @@ export function PdfViewer({
                 pdfDoc={pdfDoc}
                 pageNumber={idx + 1}
                 baseSize={size}
-                zoom={zoom}
+                displayZoom={displayZoom}
+                renderZoom={renderZoom}
                 drawingId={drawingId}
                 dimensions={dimensions}
                 selectedDimensionId={selectedDimensionId}

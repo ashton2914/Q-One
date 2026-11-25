@@ -118,7 +118,7 @@ export function BalloonOverlay({
       onClick={handleBackgroundClick}
       style={{ width, height }}
       className={`absolute inset-0 select-none ${
-        placingDimensionId ? "cursor-crosshair" : "cursor-default"
+        placingDimensionId ? "cursor-crosshair" : ""
       }`}
     >
       {visibleDimensions.map((dim) => {

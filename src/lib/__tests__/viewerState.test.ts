@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  computeAnchoredScroll,
   computeFitZoom,
+  computeWheelTargetZoom,
   findMostVisiblePage,
   shouldApplyFit,
   shouldBlockWindowClose,
@@ -49,5 +51,25 @@ describe("viewerState review fixes", () => {
     expect(findMostVisiblePage(0, 600, pages)).toBe(1);
     expect(findMostVisiblePage(600, 600, pages)).toBe(2);
     expect(findMostVisiblePage(1500, 600, pages)).toBe(3);
+  });
+
+  it("computes gentle clamped wheel zoom without excessive jumps", () => {
+    const zoomedIn = computeWheelTargetZoom(1.0, -50);
+    expect(zoomedIn).toBeGreaterThan(1.0);
+    expect(zoomedIn).toBeLessThan(1.15);
+
+    // Even a huge wheel spike is capped to a gentle step
+    const capped = computeWheelTargetZoom(1.0, -1000);
+    expect(capped).toBeLessThanOrEqual(1.2);
+
+    // Clamps strictly to [0.25, 4]
+    expect(computeWheelTargetZoom(4.0, -100)).toBe(4.0);
+    expect(computeWheelTargetZoom(0.25, 100)).toBe(0.25);
+  });
+
+  it("keeps the cursor-anchored content point stationary during zoom", () => {
+    // At zoom 1.0, scroll=100, cursor is at 300px in viewport, content pad=24 -> content coord = 376
+    // At zoom 2.0, content coord scales to 752 -> scroll should be 752 + 24 - 300 = 476
+    expect(computeAnchoredScroll(100, 300, 24, 1.0, 2.0)).toBeCloseTo(476, 4);
   });
 });

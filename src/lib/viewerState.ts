@@ -70,3 +70,28 @@ export function findMostVisiblePage(
   }
   return bestPage;
 }
+
+export function computeWheelTargetZoom(
+  currentTargetZoom: number,
+  deltaY: number,
+  minZoom = 0.25,
+  maxZoom = 4,
+): number {
+  const clampedDelta = Math.max(-80, Math.min(80, deltaY));
+  const factor = Math.exp(-clampedDelta * 0.0018);
+  const next = currentTargetZoom * factor;
+  return Math.min(maxZoom, Math.max(minZoom, next));
+}
+
+export function computeAnchoredScroll(
+  scrollPos: number,
+  cursorOffsetInViewport: number,
+  contentOffset: number,
+  oldZoom: number,
+  newZoom: number,
+): number {
+  if (oldZoom <= 0 || newZoom <= 0) return scrollPos;
+  const contentCoord = scrollPos + cursorOffsetInViewport - contentOffset;
+  const scaledCoord = contentCoord * (newZoom / oldZoom);
+  return Math.max(0, scaledCoord + contentOffset - cursorOffsetInViewport);
+}
