@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { Crosshair, X } from "lucide-react";
+import { computeFitZoom, shouldApplyFit } from "../lib/viewerState";
 import { BalloonOverlay } from "./BalloonOverlay";
 import type { Dimension, MarkerPosition } from "../types/project";
 
@@ -42,6 +43,10 @@ export function PdfViewer({
 }: PdfViewerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const appliedFitKeyRef = useRef<number>(0);
+  const zoomRef = useRef<number>(zoom);
+  zoomRef.current = zoom;
+
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
   const [pageSize, setPageSize] = useState<{ width: number; height: number }>({
     width: 0,
@@ -55,11 +60,12 @@ export function PdfViewer({
 
   // Load PDF document when pdfBytes changes
   useEffect(() => {
+    setPdfDoc(null);
+    setPageSize({ width: 0, height: 0 });
+    setBasePageSize(null);
+    setRenderError(null);
+
     if (!pdfBytes) {
-      setPdfDoc(null);
-      setPageSize({ width: 0, height: 0 });
-      setBasePageSize(null);
-      setRenderError(null);
       return;
     }
 
@@ -73,10 +79,7 @@ export function PdfViewer({
           return;
         }
         setRenderError(null);
-        setPdfDoc((prev) => {
-          if (prev) void prev.destroy();
-          return doc;
-        });
+        setPdfDoc(doc);
         onPageCountLoaded(doc.numPages);
       })
       .catch((err: unknown) => {
@@ -93,6 +96,15 @@ export function PdfViewer({
     };
   }, [pdfBytes, onPageCountLoaded]);
 
+  // Destroy previous PDFDocumentProxy cleanly outside state updaters
+  useEffect(() => {
+    return () => {
+      if (pdfDoc) {
+        void pdfDoc.destroy();
+      }
+    };
+  }, [pdfDoc]);
+
   // Render active page to canvas
   useEffect(() => {
     if (!pdfDoc || !canvasRef.current) return;
@@ -107,10 +119,13 @@ export function PdfViewer({
         if (cancelled || !canvasRef.current) return;
 
         const baseViewport = page.getViewport({ scale: 1 });
-        setBasePageSize({
-          width: baseViewport.width,
-          height: baseViewport.height,
-        });
+        setBasePageSize((prev) =>
+          prev &&
+          prev.width === baseViewport.width &&
+          prev.height === baseViewport.height
+            ? prev
+            : { width: baseViewport.width, height: baseViewport.height },
+        );
 
         const viewport = page.getViewport({ scale: zoom });
         const dpr = window.devicePixelRatio || 1;
@@ -155,28 +170,43 @@ export function PdfViewer({
     };
   }, [pdfDoc, currentPage, zoom]);
 
-  // Fit-to-viewport when requested
+  // Fit-to-viewport: runs once per fitRequestKey increment after basePageSize is ready
   useEffect(() => {
-    if (fitRequestKey === 0 || !basePageSize || !containerRef.current) return;
+    if (
+      !containerRef.current ||
+      !shouldApplyFit(fitRequestKey, appliedFitKeyRef.current, basePageSize)
+    ) {
+      return;
+    }
     const rect = containerRef.current.getBoundingClientRect();
-    const pad = 48;
-    const availW = Math.max(200, rect.width - pad);
-    const availH = Math.max(200, rect.height - pad);
-    const fitScale = Math.min(
-      availW / basePageSize.width,
-      availH / basePageSize.height,
+    const clamped = computeFitZoom(
+      rect.width,
+      rect.height,
+      basePageSize!.width,
+      basePageSize!.height,
     );
-    const clamped = Math.min(4, Math.max(0.25, Math.round(fitScale * 100) / 100));
+    appliedFitKeyRef.current = fitRequestKey;
     onZoomChange(clamped);
   }, [fitRequestKey, basePageSize, onZoomChange]);
 
-  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    if (!e.ctrlKey && !e.metaKey) return;
-    e.preventDefault();
-    const delta = e.deltaY < 0 ? 0.15 : -0.15;
-    const next = Math.min(4, Math.max(0.25, Math.round((zoom + delta) * 100) / 100));
-    onZoomChange(next);
-  };
+  // Non-passive native wheel listener for Ctrl/Cmd + wheel zoom
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const handleWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 0.15 : -0.15;
+      const next = Math.min(
+        4,
+        Math.max(0.25, Math.round((zoomRef.current + delta) * 100) / 100),
+      );
+      zoomRef.current = next;
+      onZoomChange(next);
+    };
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
+  }, [onZoomChange]);
 
   const placingDimension = placingDimensionId
     ? dimensions.find((d) => d.id === placingDimensionId) ?? null
@@ -210,11 +240,7 @@ export function PdfViewer({
         </div>
       )}
 
-      <div
-        ref={containerRef}
-        onWheel={handleWheel}
-        className="flex-1 overflow-auto p-6"
-      >
+      <div ref={containerRef} className="flex-1 overflow-auto p-6">
         <div className="mx-auto flex min-h-full w-fit items-center justify-center">
           <div className="relative bg-white shadow-2xl ring-1 ring-slate-700/80">
             <canvas ref={canvasRef} className="block" />

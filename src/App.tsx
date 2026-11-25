@@ -1,10 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import { FilePlus2, FolderOpen } from "lucide-react";
 import { DimensionEditor } from "./components/DimensionEditor";
 import { DimensionSidebar } from "./components/DimensionSidebar";
 import { PdfViewer } from "./components/PdfViewer";
 import { TopToolbar } from "./components/TopToolbar";
 import { createDimension, createProjectFromPdf } from "./lib/dimensions";
+import {
+  shouldBlockWindowClose,
+  shouldClearDirtyAfterSave,
+} from "./lib/viewerState";
 import {
   importPdf,
   openProject,
@@ -35,6 +41,16 @@ export default function App() {
   );
   const [isDirty, setIsDirty] = useState<boolean>(false);
   const [status, setStatus] = useState<StatusMessage | null>(null);
+
+  const isDirtyRef = useRef<boolean>(isDirty);
+  isDirtyRef.current = isDirty;
+  const isSavingRef = useRef<boolean>(false);
+  const editRevisionRef = useRef<number>(0);
+
+  const markDirty = useCallback(() => {
+    editRevisionRef.current += 1;
+    setIsDirty(true);
+  }, []);
 
   const activeDrawing = project?.drawings[0] ?? null;
   const pageCount = activeDrawing?.pageCount ?? 1;
@@ -109,21 +125,31 @@ export default function App() {
 
   const persistProject = useCallback(
     async (forcePrompt: boolean) => {
-      if (!project) return;
+      if (!project || isSavingRef.current) return;
+      isSavingRef.current = true;
       try {
         let targetPath = forcePrompt ? null : projectFilePath;
         if (!targetPath) {
           targetPath = await pickSaveProjectFile(project.name);
           if (!targetPath) return;
         }
-        const updated: ProjectData = {
+        const revisionAtSaveStart = editRevisionRef.current;
+        const savedAt = new Date().toISOString();
+        const snapshot: ProjectData = {
           ...project,
-          updatedAt: new Date().toISOString(),
+          updatedAt: savedAt,
         };
-        await saveProject(targetPath, updated);
-        setProject(updated);
+        await saveProject(targetPath, snapshot);
+        setProject((prev) => (prev ? { ...prev, updatedAt: savedAt } : prev));
         setProjectFilePath(targetPath);
-        setIsDirty(false);
+        if (
+          shouldClearDirtyAfterSave(
+            revisionAtSaveStart,
+            editRevisionRef.current,
+          )
+        ) {
+          setIsDirty(false);
+        }
         const displayName = targetPath.split(/[\\/]/).pop() ?? targetPath;
         showStatus("info", `Saved project to ${displayName}`);
       } catch (err) {
@@ -131,10 +157,41 @@ export default function App() {
           "error",
           err instanceof Error ? err.message : String(err),
         );
+      } finally {
+        isSavingRef.current = false;
       }
     },
     [project, projectFilePath, showStatus],
   );
+
+  // Guard window close when there are unsaved changes
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    try {
+      const appWindow = getCurrentWindow();
+      void appWindow
+        .onCloseRequested(async (event) => {
+          if (!shouldBlockWindowClose(isDirtyRef.current)) return;
+          event.preventDefault();
+          const discard = await confirmDialog(
+            "You have unsaved changes. Discard them and close DM-One?",
+            { title: "Unsaved Changes", kind: "warning" },
+          );
+          if (discard) {
+            isDirtyRef.current = false;
+            await appWindow.destroy();
+          }
+        })
+        .then((fn) => {
+          unlisten = fn;
+        });
+    } catch {
+      // Non-Tauri browser preview environment
+    }
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
 
   const handleSave = useCallback(() => {
     void persistProject(false);
@@ -179,8 +236,8 @@ export default function App() {
     });
     setSelectedDimensionId(nextDim.id);
     setPlacingDimensionId(nextDim.id);
-    setIsDirty(true);
-  }, [project]);
+    markDirty();
+  }, [project, markDirty]);
 
   const handleSelectDimension = useCallback(
     (id: string) => {
@@ -204,9 +261,9 @@ export default function App() {
           ),
         };
       });
-      setIsDirty(true);
+      markDirty();
     },
-    [],
+    [markDirty],
   );
 
   const handleDeleteDimension = useCallback(
@@ -220,9 +277,9 @@ export default function App() {
       });
       setSelectedDimensionId((prev) => (prev === id ? null : prev));
       setPlacingDimensionId((prev) => (prev === id ? null : prev));
-      setIsDirty(true);
+      markDirty();
     },
-    [],
+    [markDirty],
   );
 
   const handlePlaceMarker = useCallback(
@@ -238,9 +295,9 @@ export default function App() {
       });
       setPlacingDimensionId(null);
       setSelectedDimensionId(dimensionId);
-      setIsDirty(true);
+      markDirty();
     },
-    [],
+    [markDirty],
   );
 
   const handleMoveMarker = useCallback(
@@ -256,23 +313,26 @@ export default function App() {
           ),
         };
       });
-      setIsDirty(true);
+      markDirty();
     },
-    [],
+    [markDirty],
   );
 
-  const handleClearMarker = useCallback((dimensionId: string) => {
-    setProject((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        dimensions: prev.dimensions.map((d) =>
-          d.id === dimensionId ? { ...d, marker: null } : d,
-        ),
-      };
-    });
-    setIsDirty(true);
-  }, []);
+  const handleClearMarker = useCallback(
+    (dimensionId: string) => {
+      setProject((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          dimensions: prev.dimensions.map((d) =>
+            d.id === dimensionId ? { ...d, marker: null } : d,
+          ),
+        };
+      });
+      markDirty();
+    },
+    [markDirty],
+  );
 
   const selectedDimension =
     project?.dimensions.find((d) => d.id === selectedDimensionId) ?? null;
