@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeAnchoredScroll,
   computeFitZoom,
+  computeSafeRenderScale,
   computeWheelTargetZoom,
   findMostVisiblePage,
   shouldApplyFit,
@@ -71,5 +72,19 @@ describe("viewerState review fixes", () => {
     // At zoom 1.0, scroll=100, cursor is at 300px in viewport, content pad=24 -> content coord = 376
     // At zoom 2.0, content coord scales to 752 -> scroll should be 752 + 24 - 300 = 476
     expect(computeAnchoredScroll(100, 300, 24, 1.0, 2.0)).toBeCloseTo(476, 4);
+  });
+
+  it("caps PDF canvas render scale so WebKit backing-store limits are never exceeded", () => {
+    // Normal letter page at 1x on Retina keeps full 2x backing scale
+    expect(computeSafeRenderScale(612, 792, 1.0, 2)).toBeCloseTo(2.0, 4);
+
+    // Giant CAD sheet at 400% zoom on Retina must stay within safe side & pixel budgets
+    const safeScale = computeSafeRenderScale(3400, 2200, 4.0, 2);
+    const w = Math.floor(3400 * safeScale);
+    const h = Math.floor(2200 * safeScale);
+    expect(w).toBeLessThanOrEqual(4096);
+    expect(h).toBeLessThanOrEqual(4096);
+    expect(w * h).toBeLessThanOrEqual(12_000_000);
+    expect(safeScale).toBeGreaterThan(0.5);
   });
 });

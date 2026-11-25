@@ -23,6 +23,7 @@ import {
 import {
   computeAnchoredScroll,
   computeFitZoom,
+  computeSafeRenderScale,
   computeWheelTargetZoom,
   findMostVisiblePage,
   shouldApplyFit,
@@ -116,40 +117,64 @@ function PdfPageItem({
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
-          if (entry.isIntersecting) {
-            setIsVisible(true);
-          }
+          setIsVisible(entry.isIntersecting);
         }
       },
-      { root: scrollContainer, rootMargin: "600px 0px" },
+      { root: scrollContainer, rootMargin: "800px 0px" },
     );
     observer.observe(el);
     return () => observer.disconnect();
   }, [scrollContainer]);
 
   useEffect(() => {
-    if (!isVisible || !canvasRef.current) return;
+    const visibleCanvas = canvasRef.current;
+    if (!visibleCanvas) return;
+
+    if (!isVisible) {
+      // Free WebKit canvas backing-store memory for far-offscreen pages
+      visibleCanvas.width = 0;
+      visibleCanvas.height = 0;
+      return;
+    }
 
     let cancelled = false;
     let renderTask: { cancel: () => void; promise: Promise<void> } | null = null;
+    let offscreen: HTMLCanvasElement | null = null;
 
     pdfDoc
       .getPage(pageNumber)
       .then((page) => {
         if (cancelled || !canvasRef.current) return;
-        const viewport = page.getViewport({ scale: renderZoom });
-        const dpr = window.devicePixelRatio || 1;
-        const canvas = canvasRef.current;
-        const context = canvas.getContext("2d");
-        if (!context) return;
+        const safeScale = computeSafeRenderScale(
+          baseSize.width,
+          baseSize.height,
+          renderZoom,
+          window.devicePixelRatio || 1,
+        );
+        const renderViewport = page.getViewport({ scale: safeScale });
+        offscreen = document.createElement("canvas");
+        offscreen.width = Math.max(1, Math.floor(renderViewport.width));
+        offscreen.height = Math.max(1, Math.floor(renderViewport.height));
 
-        canvas.width = Math.floor(viewport.width * dpr);
-        canvas.height = Math.floor(viewport.height * dpr);
+        const offCtx = offscreen.getContext("2d");
+        if (!offCtx) return;
 
-        context.setTransform(dpr, 0, 0, dpr, 0, 0);
-        const task = page.render({ canvas, canvasContext: context, viewport });
+        const task = page.render({
+          canvas: offscreen,
+          canvasContext: offCtx,
+          viewport: renderViewport,
+        });
         renderTask = task;
-        return task.promise;
+        return task.promise.then(() => {
+          if (cancelled || !canvasRef.current || !offscreen) return;
+          const target = canvasRef.current;
+          target.width = offscreen.width;
+          target.height = offscreen.height;
+          const targetCtx = target.getContext("2d");
+          if (targetCtx) {
+            targetCtx.drawImage(offscreen, 0, 0);
+          }
+        });
       })
       .catch((err: unknown) => {
         if (
@@ -160,6 +185,13 @@ function PdfPageItem({
         ) {
           return;
         }
+      })
+      .finally(() => {
+        if (offscreen) {
+          offscreen.width = 0;
+          offscreen.height = 0;
+          offscreen = null;
+        }
       });
 
     return () => {
@@ -168,7 +200,7 @@ function PdfPageItem({
         renderTask.cancel();
       }
     };
-  }, [pdfDoc, pageNumber, renderZoom, isVisible]);
+  }, [pdfDoc, pageNumber, baseSize.width, baseSize.height, renderZoom, isVisible]);
 
   return (
     <div

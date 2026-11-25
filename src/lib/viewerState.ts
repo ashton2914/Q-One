@@ -95,3 +95,23 @@ export function computeAnchoredScroll(
   const scaledCoord = contentCoord * (newZoom / oldZoom);
   return Math.max(0, scaledCoord + contentOffset - cursorOffsetInViewport);
 }
+
+const MAX_CANVAS_SIDE = 4096;
+const MAX_CANVAS_PIXELS = 12_000_000;
+
+export function computeSafeRenderScale(
+  baseWidth: number,
+  baseHeight: number,
+  desiredZoom: number,
+  dpr = 1,
+): number {
+  if (baseWidth <= 0 || baseHeight <= 0 || desiredZoom <= 0) return 1;
+  const safeDpr = Math.max(1, dpr);
+  const desiredScale = desiredZoom * safeDpr;
+  const maxBySide = Math.min(
+    MAX_CANVAS_SIDE / baseWidth,
+    MAX_CANVAS_SIDE / baseHeight,
+  );
+  const maxByArea = Math.sqrt(MAX_CANVAS_PIXELS / (baseWidth * baseHeight));
+  return Math.max(0.1, Math.min(desiredScale, maxBySide, maxByArea));
+}
