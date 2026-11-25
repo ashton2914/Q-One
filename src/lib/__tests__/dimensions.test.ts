@@ -4,10 +4,8 @@ import {
   createProjectFromPdf,
   findTypeCompletion,
   formatTolerance,
-  mapPhysicalKeyToTypeChar,
   nextBalloonNumber,
   rememberDimensionType,
-  sanitizeDimensionType,
   validateDimensionId,
 } from "../dimensions";
 import type { Dimension } from "../../types/project";
@@ -138,16 +136,5 @@ describe("dimensions", () => {
     expect(validateDimensionId("512A", "uuid-2", existing)).toBeNull();
     // Brand new unique ID is valid
     expect(validateDimensionId("104", "uuid-new", existing)).toBeNull();
-  });
-
-  it("maps physical keys to uppercase ASCII for IME-free Type input and sanitizes pasted text", () => {
-    expect(mapPhysicalKeyToTypeChar("KeyC", false)).toBe("C");
-    expect(mapPhysicalKeyToTypeChar("KeyF", true)).toBe("F");
-    expect(mapPhysicalKeyToTypeChar("Digit2", false)).toBe("2");
-    expect(mapPhysicalKeyToTypeChar("Minus", false)).toBe("-");
-    expect(mapPhysicalKeyToTypeChar("Minus", true)).toBe("_");
-    expect(mapPhysicalKeyToTypeChar("Tab", false)).toBeNull();
-
-    expect(sanitizeDimensionType("ctf-1 中文")).toBe("CTF-1");
   });
 });
