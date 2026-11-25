@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUpToLine,
   Box,
+  Check,
   ChevronDown,
   ChevronRight,
   ExternalLink,
@@ -9,6 +10,7 @@ import {
   FileText,
   GitBranchPlus,
   Maximize2,
+  Pencil,
   Plus,
   Trash2,
   Unlink,
@@ -57,8 +59,6 @@ type PointerDragState =
     }
   | {
       kind: "wire";
-      /** "from-parent": dragging from right port of parent -> drop on child.
-       *  "from-child": dragging from left port of child -> drop on parent (or empty canvas to detach). */
       direction: "from-parent" | "from-child";
       sourcePartId: string;
       originCanvasX: number;
@@ -68,6 +68,243 @@ type PointerDragState =
     };
 
 const CARD_DRAG_THRESHOLD_PX = 6;
+
+interface InPlacePartEditorProps {
+  part: Part;
+  parentName: string | null;
+  attachedDrawings: DrawingEntry[];
+  dimCountByDrawing: Map<string, number>;
+  x: number;
+  y: number;
+  onUpdate: (patch: Partial<Part>) => void;
+  onDone: () => void;
+  onUnlink: () => void;
+  onAttachPdf: () => void;
+  onDetachPdf: (drawingId: string) => void;
+  onOpenDrawing: (drawingId: string) => void;
+  onDelete: () => void;
+}
+
+function InPlacePartEditor({
+  part,
+  parentName,
+  attachedDrawings,
+  dimCountByDrawing,
+  x,
+  y,
+  onUpdate,
+  onDone,
+  onUnlink,
+  onAttachPdf,
+  onDetachPdf,
+  onOpenDrawing,
+  onDelete,
+}: InPlacePartEditorProps) {
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const input = nameInputRef.current;
+    if (!input) return;
+    input.focus();
+    input.select();
+  }, [part.id]);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      onDone();
+    } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      e.stopPropagation();
+      onDone();
+    }
+  };
+
+  return (
+    <div
+      data-part-card-id={part.id}
+      data-part-editor="true"
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={handleKeyDown}
+      style={{
+        left: x,
+        top: y,
+        width: 296,
+      }}
+      className="absolute z-40 rounded-lg border border-neutral-500 bg-neutral-950 p-3 text-xs shadow-2xl ring-2 ring-blue-500/40"
+    >
+      <div className="mb-2.5 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-neutral-200">
+          <Box className="h-3.5 w-3.5 text-blue-400" />
+          <span className="font-semibold">Edit Part</span>
+        </div>
+
+        {parentName && (
+          <button
+            type="button"
+            tabIndex={-1}
+            title={`Disconnect from "${parentName}"`}
+            onClick={onUnlink}
+            className="inline-flex items-center gap-1 rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300 hover:bg-rose-950 hover:text-rose-300"
+          >
+            <Unlink className="h-2.5 w-2.5" />
+            Unlink
+          </button>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <div>
+          <label className="mb-1 block text-[11px] text-neutral-400">
+            Part Name
+          </label>
+          <input
+            ref={nameInputRef}
+            type="text"
+            value={part.name}
+            placeholder="e.g. Metal C-Cover"
+            onChange={(e) => onUpdate({ name: e.target.value })}
+            className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-1.5">
+          <div>
+            <label className="mb-1 block text-[11px] text-neutral-400">
+              Part Number
+            </label>
+            <input
+              type="text"
+              value={part.partNumber}
+              placeholder="e.g. M1292339"
+              onChange={(e) => onUpdate({ partNumber: e.target.value })}
+              className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 font-mono text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-[11px] text-neutral-400">
+              Revision
+            </label>
+            <input
+              type="text"
+              value={part.revision}
+              placeholder="e.g. Rev B"
+              onChange={(e) => onUpdate({ revision: e.target.value })}
+              className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 font-mono text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-[11px] text-neutral-400">
+            Notes
+          </label>
+          <input
+            type="text"
+            value={part.notes}
+            placeholder="Material, process, supplier notes..."
+            onChange={(e) => onUpdate({ notes: e.target.value })}
+            className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
+          />
+        </div>
+
+        {/* Inline Attached Drawings */}
+        <div className="border-t border-neutral-800 pt-2">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
+              Drawings ({attachedDrawings.length})
+            </span>
+            <button
+              type="button"
+              tabIndex={-1}
+              onClick={onAttachPdf}
+              className="inline-flex items-center gap-1 rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] font-medium text-neutral-200 hover:bg-neutral-700 hover:text-white"
+            >
+              <FilePlus2 className="h-3 w-3" />
+              Attach PDF
+            </button>
+          </div>
+
+          {attachedDrawings.length === 0 ? (
+            <div className="rounded border border-dashed border-neutral-800 py-2 text-center text-[10px] text-neutral-500">
+              No PDF attached
+            </div>
+          ) : (
+            <ul className="max-h-28 space-y-1 overflow-y-auto">
+              {attachedDrawings.map((drw) => {
+                const count = dimCountByDrawing.get(drw.id) ?? 0;
+                return (
+                  <li
+                    key={drw.id}
+                    className="flex items-center justify-between gap-1.5 rounded border border-neutral-800 bg-neutral-900/90 px-2 py-1"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1">
+                        <FileText className="h-3 w-3 shrink-0 text-emerald-400" />
+                        <span className="truncate font-mono text-[10px] text-neutral-100">
+                          {drw.filename}
+                        </span>
+                      </div>
+                      <div className="text-[9px] text-neutral-500">
+                        {drw.pageCount}p · {count} dims
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        title="Open in Drawing"
+                        onClick={() => onOpenDrawing(drw.id)}
+                        className="rounded bg-neutral-800 p-1 text-neutral-300 hover:bg-blue-600 hover:text-white"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        title="Remove drawing"
+                        onClick={() => onDetachPdf(drw.id)}
+                        className="rounded p-1 text-neutral-500 hover:bg-rose-950 hover:text-rose-400"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between border-t border-neutral-800 pt-2">
+        <button
+          type="button"
+          tabIndex={-1}
+          onClick={onDelete}
+          className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] text-neutral-400 hover:bg-rose-950/70 hover:text-rose-300"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Delete
+        </button>
+
+        <button
+          type="button"
+          tabIndex={-1}
+          title="Done (⌘/Ctrl+Enter)"
+          onClick={onDone}
+          className="inline-flex items-center gap-1 rounded bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-950 hover:bg-white"
+        >
+          <Check className="h-3.5 w-3.5" />
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function ProjectWorkspace({
   project,
@@ -85,8 +322,8 @@ export function ProjectWorkspace({
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const canvasInnerRef = useRef<HTMLDivElement | null>(null);
   const rootDropZoneRef = useRef<HTMLDivElement | null>(null);
-  const nameInputRef = useRef<HTMLInputElement | null>(null);
   const panRef = useRef<PanState | null>(null);
+  const prevPartsCountRef = useRef<number>(project.parts.length);
 
   const [zoom, setZoom] = useState<number>(1);
   const zoomRef = useRef<number>(zoom);
@@ -94,15 +331,34 @@ export function ProjectWorkspace({
 
   const [isPanning, setIsPanning] = useState<boolean>(false);
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
+  const [editingPartId, setEditingPartId] = useState<string | null>(null);
   const [pointerDrag, setPointerDrag] = useState<PointerDragState | null>(null);
   const [hoveredTargetId, setHoveredTargetId] = useState<
     string | "__root__" | null
   >(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
 
+  // Auto-open newly added Part card in-place for immediate naming
+  useEffect(() => {
+    if (project.parts.length > prevPartsCountRef.current && selectedPartId) {
+      setEditingPartId(selectedPartId);
+    } else if (
+      editingPartId &&
+      !project.parts.some((p) => p.id === editingPartId)
+    ) {
+      setEditingPartId(null);
+    }
+    prevPartsCountRef.current = project.parts.length;
+  }, [project.parts, selectedPartId, editingPartId]);
+
   const drawingsById = useMemo(
     () => new Map<string, DrawingEntry>(project.drawings.map((d) => [d.id, d])),
     [project.drawings],
+  );
+
+  const partsById = useMemo(
+    () => new Map<string, Part>(project.parts.map((p) => [p.id, p])),
+    [project.parts],
   );
 
   const dimCountByDrawing = useMemo(() => {
@@ -120,9 +376,6 @@ export function ProjectWorkspace({
     () => layoutPartTree(project.parts, collapsedIds),
     [project.parts, collapsedIds],
   );
-
-  const selectedPart =
-    project.parts.find((p) => p.id === selectedPartId) ?? null;
 
   // Cmd/Ctrl + wheel zoom on the BOM canvas
   useEffect(() => {
@@ -292,7 +545,6 @@ export function ProjectWorkspace({
             }
           }
         } else {
-          // from-child: drop on a target part -> nest under it; drop on empty canvas -> promote to root
           const src = partsRef.current.find(
             (p) => p.id === current.sourcePartId,
           );
@@ -360,6 +612,9 @@ export function ProjectWorkspace({
     if (e.button !== 0 || !viewportRef.current) return;
     const target = e.target as HTMLElement;
     if (target.closest("[data-part-card-id]")) return;
+    if (editingPartId) {
+      setEditingPartId(null);
+    }
     const el = viewportRef.current;
     el.setPointerCapture(e.pointerId);
     panRef.current = {
@@ -400,10 +655,13 @@ export function ProjectWorkspace({
     e: React.PointerEvent<HTMLDivElement>,
     partId: string,
   ) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || editingPartId === partId) return;
     const target = e.target as HTMLElement;
     if (target.closest("button") || target.closest("[data-port='true']")) return;
     e.stopPropagation();
+    if (editingPartId && editingPartId !== partId) {
+      setEditingPartId(null);
+    }
     setPointerDrag({
       kind: "card",
       partId,
@@ -425,6 +683,9 @@ export function ProjectWorkspace({
     if (e.button !== 0) return;
     e.stopPropagation();
     e.preventDefault();
+    if (editingPartId) {
+      setEditingPartId(null);
+    }
     const pt = clientToCanvasPoint(e.clientX, e.clientY);
     setPointerDrag({
       kind: "wire",
@@ -512,293 +773,338 @@ export function ProjectWorkspace({
         </div>
       </div>
 
-      {/* Main Split: Interactive Node Tree Canvas + Right Part Inspector Drawer */}
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-          {activeDraggingCardPart &&
-            activeDraggingCardPart.parentId !== null && (
-              <div
-                ref={rootDropZoneRef}
-                className={`absolute left-1/2 top-3 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-medium shadow-xl transition-colors ${
-                  hoveredTargetId === "__root__"
-                    ? "border-blue-400 bg-blue-600/90 text-white"
-                    : "border-neutral-700 bg-neutral-950/95 text-neutral-300"
-                }`}
-              >
-                <ArrowUpToLine className="h-3.5 w-3.5" />
-                Drop here to promote "{activeDraggingCardPart.name}" to Root Part
-              </div>
-            )}
-
-          {pointerDrag?.kind === "wire" && (
-            <div className="pointer-events-none absolute left-1/2 top-3 z-40 -translate-x-1/2 rounded-full border border-blue-500/50 bg-neutral-950/95 px-3.5 py-1 text-[11px] text-blue-200 shadow-xl">
-              {pointerDrag.direction === "from-parent"
-                ? "Drop wire onto a Part card to attach it as a Sub-part"
-                : "Drop wire onto a Parent Part card (or empty space to detach to Root)"}
-            </div>
-          )}
-
+      {/* Full-Width Interactive BOM Node Tree Canvas */}
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        {activeDraggingCardPart && activeDraggingCardPart.parentId !== null && (
           <div
-            ref={viewportRef}
-            onPointerDown={handleCanvasPointerDown}
-            onPointerMove={handleCanvasPointerMove}
-            onPointerUp={stopCanvasPan}
-            onPointerCancel={stopCanvasPan}
-            style={{
-              backgroundImage:
-                "radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px)",
-              backgroundSize: "24px 24px",
-            }}
-            className={`relative flex-1 overflow-auto ${
-              pointerDrag?.kind === "wire"
-                ? "cursor-crosshair"
-                : isPanning || activeDraggingCardPart
-                  ? "cursor-grabbing"
-                  : "cursor-grab"
+            ref={rootDropZoneRef}
+            className={`absolute left-1/2 top-3 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-medium shadow-xl transition-colors ${
+              hoveredTargetId === "__root__"
+                ? "border-blue-400 bg-blue-600/90 text-white"
+                : "border-neutral-700 bg-neutral-950/95 text-neutral-300"
             }`}
           >
-            {project.parts.length === 0 ? (
-              <div className="flex h-full items-center justify-center p-8">
-                <div className="max-w-sm rounded-xl border border-neutral-800 bg-neutral-950/90 p-6 text-center shadow-xl">
-                  <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-neutral-800 text-neutral-300">
-                    <Box className="h-5 w-5" />
-                  </div>
-                  <h2 className="text-sm font-semibold text-neutral-100">
-                    Start Your Assembly BOM
-                  </h2>
-                  <p className="mt-1.5 text-xs leading-relaxed text-neutral-400">
-                    Add parts, drag cards onto each other or drag connection
-                    wires between ports to build sub-part hierarchies, and attach
-                    PDF drawings.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => onAddPart(null)}
-                    className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-neutral-100 px-4 py-2 text-xs font-medium text-neutral-950 hover:bg-white"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    Add First Part
-                  </button>
+            <ArrowUpToLine className="h-3.5 w-3.5" />
+            Drop here to promote "{activeDraggingCardPart.name}" to Root Part
+          </div>
+        )}
+
+        {pointerDrag?.kind === "wire" && (
+          <div className="pointer-events-none absolute left-1/2 top-3 z-40 -translate-x-1/2 rounded-full border border-blue-500/50 bg-neutral-950/95 px-3.5 py-1 text-[11px] text-blue-200 shadow-xl">
+            {pointerDrag.direction === "from-parent"
+              ? "Drop wire onto a Part card to attach it as a Sub-part"
+              : "Drop wire onto a Parent Part card (or empty space to detach to Root)"}
+          </div>
+        )}
+
+        <div
+          ref={viewportRef}
+          onPointerDown={handleCanvasPointerDown}
+          onPointerMove={handleCanvasPointerMove}
+          onPointerUp={stopCanvasPan}
+          onPointerCancel={stopCanvasPan}
+          style={{
+            backgroundImage:
+              "radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px)",
+            backgroundSize: "24px 24px",
+          }}
+          className={`relative flex-1 overflow-auto ${
+            pointerDrag?.kind === "wire"
+              ? "cursor-crosshair"
+              : isPanning || activeDraggingCardPart
+                ? "cursor-grabbing"
+                : "cursor-grab"
+          }`}
+        >
+          {project.parts.length === 0 ? (
+            <div className="flex h-full items-center justify-center p-8">
+              <div className="max-w-sm rounded-xl border border-neutral-800 bg-neutral-950/90 p-6 text-center shadow-xl">
+                <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-neutral-800 text-neutral-300">
+                  <Box className="h-5 w-5" />
                 </div>
+                <h2 className="text-sm font-semibold text-neutral-100">
+                  Start Your Assembly BOM
+                </h2>
+                <p className="mt-1.5 text-xs leading-relaxed text-neutral-400">
+                  Add parts, double-click or click Edit to edit in-place, drag
+                  cards or connection wires to build sub-part hierarchies, and
+                  attach PDF drawings.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => onAddPart(null)}
+                  className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-neutral-100 px-4 py-2 text-xs font-medium text-neutral-950 hover:bg-white"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add First Part
+                </button>
               </div>
-            ) : (
+            </div>
+          ) : (
+            <div
+              style={{
+                width: Math.max((layout.width + 120) * zoom, 820),
+                height: Math.max((layout.height + 240) * zoom, 560),
+              }}
+              className="relative"
+            >
               <div
+                ref={canvasInnerRef}
                 style={{
-                  width: Math.max(layout.width * zoom, 720),
-                  height: Math.max(layout.height * zoom, 480),
+                  width: Math.max(layout.width + 120, 820),
+                  height: Math.max(layout.height + 240, 560),
+                  transform: `scale(${zoom})`,
+                  transformOrigin: "0 0",
                 }}
                 className="relative"
               >
-                <div
-                  ref={canvasInnerRef}
-                  style={{
-                    width: Math.max(layout.width, 720),
-                    height: Math.max(layout.height, 480),
-                    transform: `scale(${zoom})`,
-                    transformOrigin: "0 0",
-                  }}
-                  className="relative"
+                {/* SVG Cubic Bézier Edges + Interactive Disconnect + Live Wire Preview */}
+                <svg
+                  width={Math.max(layout.width + 120, 820)}
+                  height={Math.max(layout.height + 240, 560)}
+                  className="pointer-events-none absolute inset-0 overflow-visible"
                 >
-                  {/* SVG Cubic Bézier Edges + Interactive Disconnect + Live Wire Preview */}
-                  <svg
-                    width={Math.max(layout.width, 720)}
-                    height={Math.max(layout.height, 480)}
-                    className="pointer-events-none absolute inset-0 overflow-visible"
-                  >
-                    {layout.edges.map((edge) => {
-                      const midX = (edge.x1 + edge.x2) / 2;
-                      const midY = (edge.y1 + edge.y2) / 2;
-                      const d = `M ${edge.x1} ${edge.y1} C ${midX} ${edge.y1}, ${midX} ${edge.y2}, ${edge.x2} ${edge.y2}`;
-                      const isHovered = hoveredEdgeId === edge.id;
-                      const isHighlighted =
-                        edge.fromId === selectedPartId ||
-                        edge.toId === selectedPartId;
-                      return (
-                        <g
-                          key={edge.id}
-                          className="pointer-events-auto cursor-pointer"
-                          onMouseEnter={() => setHoveredEdgeId(edge.id)}
-                          onMouseLeave={() =>
-                            setHoveredEdgeId((prev) =>
-                              prev === edge.id ? null : prev,
-                            )
+                  {layout.edges.map((edge) => {
+                    const midX = (edge.x1 + edge.x2) / 2;
+                    const midY = (edge.y1 + edge.y2) / 2;
+                    const d = `M ${edge.x1} ${edge.y1} C ${midX} ${edge.y1}, ${midX} ${edge.y2}, ${edge.x2} ${edge.y2}`;
+                    const isHovered = hoveredEdgeId === edge.id;
+                    const isHighlighted =
+                      edge.fromId === selectedPartId ||
+                      edge.toId === selectedPartId;
+                    return (
+                      <g
+                        key={edge.id}
+                        className="pointer-events-auto cursor-pointer"
+                        onMouseEnter={() => setHoveredEdgeId(edge.id)}
+                        onMouseLeave={() =>
+                          setHoveredEdgeId((prev) =>
+                            prev === edge.id ? null : prev,
+                          )
+                        }
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setHoveredEdgeId(null);
+                          onReparentPart(edge.toId, null);
+                        }}
+                      >
+                        <title>Click to disconnect link</title>
+                        <path
+                          d={d}
+                          fill="none"
+                          stroke="transparent"
+                          strokeWidth={16}
+                        />
+                        <path
+                          d={d}
+                          fill="none"
+                          stroke={
+                            isHovered
+                              ? "#f43f5e"
+                              : isHighlighted
+                                ? "#3b82f6"
+                                : "#525252"
                           }
-                          onPointerDown={(e) => e.stopPropagation()}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setHoveredEdgeId(null);
-                            onReparentPart(edge.toId, null);
-                          }}
-                        >
-                          <title>Click to disconnect link</title>
-                          {/* Wide invisible hit target for easy hover/click */}
+                          strokeWidth={isHovered || isHighlighted ? 2.2 : 1.5}
+                        />
+                        {isHovered && (
+                          <g transform={`translate(${midX}, ${midY})`}>
+                            <circle
+                              r={9}
+                              fill="#171717"
+                              stroke="#f43f5e"
+                              strokeWidth={1.5}
+                            />
+                            <path
+                              d="M -3 -3 L 3 3 M 3 -3 L -3 3"
+                              stroke="#fda4af"
+                              strokeWidth={1.6}
+                              strokeLinecap="round"
+                            />
+                          </g>
+                        )}
+                      </g>
+                    );
+                  })}
+
+                  {pointerDrag?.kind === "wire" &&
+                    (() => {
+                      const x1 = pointerDrag.originCanvasX;
+                      const y1 = pointerDrag.originCanvasY;
+                      const x2 = pointerDrag.cursorCanvasX;
+                      const y2 = pointerDrag.cursorCanvasY;
+                      const dx = Math.max(48, Math.abs(x2 - x1) * 0.5);
+                      const c1x =
+                        pointerDrag.direction === "from-parent"
+                          ? x1 + dx
+                          : x1 - dx;
+                      const c2x =
+                        pointerDrag.direction === "from-parent"
+                          ? x2 - dx
+                          : x2 + dx;
+                      const d = `M ${x1} ${y1} C ${c1x} ${y1}, ${c2x} ${y2}, ${x2} ${y2}`;
+                      return (
+                        <g>
                           <path
                             d={d}
                             fill="none"
-                            stroke="transparent"
-                            strokeWidth={16}
+                            stroke="#3b82f6"
+                            strokeWidth={2}
+                            strokeDasharray="6 4"
                           />
-                          <path
-                            d={d}
-                            fill="none"
-                            stroke={
-                              isHovered
-                                ? "#f43f5e"
-                                : isHighlighted
-                                  ? "#3b82f6"
-                                  : "#525252"
-                            }
-                            strokeWidth={isHovered || isHighlighted ? 2.2 : 1.5}
-                          />
-                          {isHovered && (
-                            <g transform={`translate(${midX}, ${midY})`}>
-                              <circle
-                                r={9}
-                                fill="#171717"
-                                stroke="#f43f5e"
-                                strokeWidth={1.5}
-                              />
-                              <path
-                                d="M -3 -3 L 3 3 M 3 -3 L -3 3"
-                                stroke="#fda4af"
-                                strokeWidth={1.6}
-                                strokeLinecap="round"
-                              />
-                            </g>
-                          )}
+                          <circle cx={x2} cy={y2} r={4} fill="#60a5fa" />
                         </g>
                       );
-                    })}
+                    })()}
+                </svg>
 
-                    {pointerDrag?.kind === "wire" &&
-                      (() => {
-                        const x1 = pointerDrag.originCanvasX;
-                        const y1 = pointerDrag.originCanvasY;
-                        const x2 = pointerDrag.cursorCanvasX;
-                        const y2 = pointerDrag.cursorCanvasY;
-                        const dx = Math.max(48, Math.abs(x2 - x1) * 0.5);
-                        const c1x =
-                          pointerDrag.direction === "from-parent"
-                            ? x1 + dx
-                            : x1 - dx;
-                        const c2x =
-                          pointerDrag.direction === "from-parent"
-                            ? x2 - dx
-                            : x2 + dx;
-                        const d = `M ${x1} ${y1} C ${c1x} ${y1}, ${c2x} ${y2}, ${x2} ${y2}`;
-                        return (
-                          <g>
-                            <path
-                              d={d}
-                              fill="none"
-                              stroke="#3b82f6"
-                              strokeWidth={2}
-                              strokeDasharray="6 4"
-                            />
-                            <circle cx={x2} cy={y2} r={4} fill="#60a5fa" />
-                          </g>
-                        );
-                      })()}
-                  </svg>
+                {/* Interactive Part Cards & In-Place Editor */}
+                {layout.nodes.map((node) => {
+                  const { part } = node;
+                  const attachedDrawings = part.drawingIds
+                    .map((id) => drawingsById.get(id))
+                    .filter((d): d is DrawingEntry => Boolean(d));
 
-                  {/* Interactive Part Cards */}
-                  {layout.nodes.map((node) => {
-                    const { part } = node;
-                    const isSelected = part.id === selectedPartId;
-                    const isCollapsed = collapsedIds.has(part.id);
-                    const isDropTarget = hoveredTargetId === part.id;
-                    const isDraggingThis =
-                      pointerDrag?.kind === "card" &&
-                      pointerDrag.active &&
-                      pointerDrag.partId === part.id;
-                    const attachedDrawings = part.drawingIds
-                      .map((id) => drawingsById.get(id))
-                      .filter((d): d is DrawingEntry => Boolean(d));
-                    const totalDims = part.drawingIds.reduce(
-                      (sum, id) => sum + (dimCountByDrawing.get(id) ?? 0),
-                      0,
-                    );
-
-                    const leftPortX = node.x;
-                    const rightPortX = node.x + PART_CARD_WIDTH;
-                    const portY = node.y + PART_CARD_HEIGHT / 2;
-
+                  if (editingPartId === part.id) {
+                    const parentName = part.parentId
+                      ? partsById.get(part.parentId)?.name.trim() ||
+                        "Parent Part"
+                      : null;
                     return (
-                      <div
+                      <InPlacePartEditor
                         key={part.id}
-                        data-part-card-id={part.id}
-                        onPointerDown={(e) => startCardDrag(e, part.id)}
-                        style={{
-                          left: node.x,
-                          top: node.y,
-                          width: PART_CARD_WIDTH,
-                          height: PART_CARD_HEIGHT,
+                        part={part}
+                        parentName={parentName}
+                        attachedDrawings={attachedDrawings}
+                        dimCountByDrawing={dimCountByDrawing}
+                        x={node.x}
+                        y={node.y}
+                        onUpdate={(patch) => onUpdatePart(part.id, patch)}
+                        onDone={() => setEditingPartId(null)}
+                        onUnlink={() => onReparentPart(part.id, null)}
+                        onAttachPdf={() => onAttachPdf(part.id)}
+                        onDetachPdf={(drwId) => onDetachPdf(part.id, drwId)}
+                        onOpenDrawing={onOpenDrawing}
+                        onDelete={() => {
+                          setEditingPartId(null);
+                          onDeletePart(part.id);
                         }}
-                        className={`group absolute flex cursor-grab flex-col justify-between rounded-lg border p-2.5 shadow-lg transition-shadow select-none ${
-                          isDropTarget
-                            ? "border-blue-400 bg-blue-950/50 ring-2 ring-blue-500/70"
-                            : isSelected
-                              ? "border-neutral-400 bg-neutral-900 ring-2 ring-blue-500/40"
-                              : "border-neutral-700/90 bg-neutral-950/95 hover:border-neutral-500"
-                        } ${isDraggingThis ? "opacity-40" : ""}`}
-                      >
-                        {/* Left Port (Child / Parent-link input) */}
-                        <button
-                          type="button"
-                          data-port="true"
-                          title="Drag wire to attach under a Parent Part (or drop on empty space to detach)"
-                          onPointerDown={(e) =>
-                            startWireDrag(
-                              e,
-                              "from-child",
-                              part.id,
-                              leftPortX,
-                              portY,
-                            )
-                          }
-                          className={`absolute -left-2 top-1/2 z-20 h-3.5 w-3.5 -translate-y-1/2 cursor-crosshair rounded-full border-2 transition-transform hover:scale-125 ${
-                            part.parentId
-                              ? "border-blue-400 bg-neutral-950"
-                              : "border-neutral-500 bg-neutral-900 opacity-75 group-hover:opacity-100"
-                          }`}
-                        />
+                      />
+                    );
+                  }
 
-                        {/* Right Port (Parent / Sub-part output) */}
-                        <button
-                          type="button"
-                          data-port="true"
-                          title="Drag wire onto another Part to make it a Sub-part"
-                          onPointerDown={(e) =>
-                            startWireDrag(
-                              e,
-                              "from-parent",
-                              part.id,
-                              rightPortX,
-                              portY,
-                            )
-                          }
-                          className={`absolute -right-2 top-1/2 z-20 h-3.5 w-3.5 -translate-y-1/2 cursor-crosshair rounded-full border-2 transition-transform hover:scale-125 ${
-                            node.hasChildren
-                              ? "border-blue-400 bg-blue-500"
-                              : "border-neutral-500 bg-neutral-900 opacity-75 group-hover:opacity-100"
-                          }`}
-                        />
+                  const isSelected = part.id === selectedPartId;
+                  const isCollapsed = collapsedIds.has(part.id);
+                  const isDropTarget = hoveredTargetId === part.id;
+                  const isDraggingThis =
+                    pointerDrag?.kind === "card" &&
+                    pointerDrag.active &&
+                    pointerDrag.partId === part.id;
+                  const totalDims = part.drawingIds.reduce(
+                    (sum, id) => sum + (dimCountByDrawing.get(id) ?? 0),
+                    0,
+                  );
 
-                        {/* Header row */}
-                        <div className="flex items-start justify-between gap-1.5">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5">
-                              <Box className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
-                              <span className="truncate text-xs font-semibold text-neutral-100">
-                                {part.name.trim() || "Untitled Part"}
-                              </span>
-                            </div>
-                            <div className="mt-0.5 truncate font-mono text-[10px] text-neutral-400">
-                              {[part.partNumber.trim(), part.revision.trim()]
-                                .filter(Boolean)
-                                .join(" · ") || "Drag card or port wire to connect"}
-                            </div>
+                  const leftPortX = node.x;
+                  const rightPortX = node.x + PART_CARD_WIDTH;
+                  const portY = node.y + PART_CARD_HEIGHT / 2;
+
+                  return (
+                    <div
+                      key={part.id}
+                      data-part-card-id={part.id}
+                      onPointerDown={(e) => startCardDrag(e, part.id)}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        onSelectPart(part.id);
+                        setEditingPartId(part.id);
+                      }}
+                      style={{
+                        left: node.x,
+                        top: node.y,
+                        width: PART_CARD_WIDTH,
+                        height: PART_CARD_HEIGHT,
+                      }}
+                      className={`group absolute flex cursor-grab flex-col justify-between rounded-lg border p-2.5 shadow-lg transition-shadow select-none ${
+                        isDropTarget
+                          ? "border-blue-400 bg-blue-950/50 ring-2 ring-blue-500/70"
+                          : isSelected
+                            ? "border-neutral-400 bg-neutral-900 ring-2 ring-blue-500/40"
+                            : "border-neutral-700/90 bg-neutral-950/95 hover:border-neutral-500"
+                      } ${isDraggingThis ? "opacity-40" : ""}`}
+                    >
+                      {/* Left Port */}
+                      <button
+                        type="button"
+                        data-port="true"
+                        title="Drag wire to attach under a Parent Part (or drop on empty space to detach)"
+                        onPointerDown={(e) =>
+                          startWireDrag(
+                            e,
+                            "from-child",
+                            part.id,
+                            leftPortX,
+                            portY,
+                          )
+                        }
+                        className={`absolute -left-2 top-1/2 z-20 h-3.5 w-3.5 -translate-y-1/2 cursor-crosshair rounded-full border-2 transition-transform hover:scale-125 ${
+                          part.parentId
+                            ? "border-blue-400 bg-neutral-950"
+                            : "border-neutral-500 bg-neutral-900 opacity-75 group-hover:opacity-100"
+                        }`}
+                      />
+
+                      {/* Right Port */}
+                      <button
+                        type="button"
+                        data-port="true"
+                        title="Drag wire onto another Part to make it a Sub-part"
+                        onPointerDown={(e) =>
+                          startWireDrag(
+                            e,
+                            "from-parent",
+                            part.id,
+                            rightPortX,
+                            portY,
+                          )
+                        }
+                        className={`absolute -right-2 top-1/2 z-20 h-3.5 w-3.5 -translate-y-1/2 cursor-crosshair rounded-full border-2 transition-transform hover:scale-125 ${
+                          node.hasChildren
+                            ? "border-blue-400 bg-blue-500"
+                            : "border-neutral-500 bg-neutral-900 opacity-75 group-hover:opacity-100"
+                        }`}
+                      />
+
+                      {/* Header row */}
+                      <div className="flex items-start justify-between gap-1.5">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <Box className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
+                            <span className="truncate text-xs font-semibold text-neutral-100">
+                              {part.name.trim() || "Untitled Part"}
+                            </span>
                           </div>
+                          <div className="mt-0.5 truncate font-mono text-[10px] text-neutral-400">
+                            {[part.partNumber.trim(), part.revision.trim()]
+                              .filter(Boolean)
+                              .join(" · ") || "Double-click to edit"}
+                          </div>
+                        </div>
+
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button
+                            type="button"
+                            title="Edit part in-place"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectPart(part.id);
+                              setEditingPartId(part.id);
+                            }}
+                            className="rounded p-1 text-neutral-500 opacity-0 transition-opacity hover:bg-neutral-800 hover:text-neutral-100 group-hover:opacity-100 focus:opacity-100"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
 
                           {node.hasChildren && (
                             <button
@@ -825,318 +1131,102 @@ export function ProjectWorkspace({
                             </button>
                           )}
                         </div>
+                      </div>
 
-                        {/* Middle: attached PDF chips */}
-                        <div className="flex items-center gap-1 overflow-hidden">
-                          {attachedDrawings.length === 0 ? (
-                            <span className="text-[10px] italic text-neutral-500">
-                              No drawing attached
-                            </span>
-                          ) : (
-                            <>
-                              {attachedDrawings.slice(0, 2).map((drw) => (
-                                <button
-                                  key={drw.id}
-                                  type="button"
-                                  title={`Open "${drw.filename}" in Drawing`}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onOpenDrawing(drw.id);
-                                  }}
-                                  className="inline-flex max-w-[110px] items-center gap-1 rounded bg-neutral-800/90 px-1.5 py-0.5 text-[10px] text-neutral-200 ring-1 ring-neutral-700 hover:bg-blue-600/30 hover:text-white hover:ring-blue-500/60"
-                                >
-                                  <FileText className="h-2.5 w-2.5 shrink-0 text-emerald-400" />
-                                  <span className="truncate">
-                                    {drw.filename}
-                                  </span>
-                                </button>
-                              ))}
-                              {attachedDrawings.length > 2 && (
-                                <span className="text-[10px] text-neutral-400">
-                                  +{attachedDrawings.length - 2}
-                                </span>
-                              )}
-                            </>
-                          )}
-                        </div>
-
-                        {/* Footer: dimension count + quick actions */}
-                        <div className="flex items-center justify-between border-t border-neutral-800/90 pt-1.5 text-[10px]">
-                          <span className="font-mono text-neutral-500">
-                            {totalDims} {totalDims === 1 ? "dim" : "dims"}
+                      {/* Middle: attached PDF chips */}
+                      <div className="flex items-center gap-1 overflow-hidden">
+                        {attachedDrawings.length === 0 ? (
+                          <span className="text-[10px] italic text-neutral-500">
+                            No drawing attached
                           </span>
+                        ) : (
+                          <>
+                            {attachedDrawings.slice(0, 2).map((drw) => (
+                              <button
+                                key={drw.id}
+                                type="button"
+                                title={`Open "${drw.filename}" in Drawing`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenDrawing(drw.id);
+                                }}
+                                className="inline-flex max-w-[110px] items-center gap-1 rounded bg-neutral-800/90 px-1.5 py-0.5 text-[10px] text-neutral-200 ring-1 ring-neutral-700 hover:bg-blue-600/30 hover:text-white hover:ring-blue-500/60"
+                              >
+                                <FileText className="h-2.5 w-2.5 shrink-0 text-emerald-400" />
+                                <span className="truncate">{drw.filename}</span>
+                              </button>
+                            ))}
+                            {attachedDrawings.length > 2 && (
+                              <span className="text-[10px] text-neutral-400">
+                                +{attachedDrawings.length - 2}
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </div>
 
-                          <div className="flex items-center gap-1">
-                            <button
-                              type="button"
-                              title="Attach PDF drawing"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onAttachPdf(part.id);
-                              }}
-                              className="inline-flex items-center gap-0.5 rounded bg-neutral-800 px-1.5 py-0.5 text-neutral-300 hover:bg-neutral-700 hover:text-white"
-                            >
-                              <FilePlus2 className="h-3 w-3" />
-                              PDF
-                            </button>
-                            <button
-                              type="button"
-                              title="Add sub-part"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setCollapsedIds((prev) => {
-                                  if (!prev.has(part.id)) return prev;
-                                  const next = new Set(prev);
-                                  next.delete(part.id);
-                                  return next;
-                                });
-                                onAddPart(part.id);
-                              }}
-                              className="inline-flex items-center gap-0.5 rounded bg-neutral-800 px-1.5 py-0.5 text-neutral-300 hover:bg-neutral-700 hover:text-white"
-                            >
-                              <GitBranchPlus className="h-3 w-3" />
-                              Sub
-                            </button>
-                          </div>
+                      {/* Footer: dimension count + quick actions */}
+                      <div className="flex items-center justify-between border-t border-neutral-800/90 pt-1.5 text-[10px]">
+                        <span className="font-mono text-neutral-500">
+                          {totalDims} {totalDims === 1 ? "dim" : "dims"}
+                        </span>
+
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            title="Attach PDF drawing"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onAttachPdf(part.id);
+                            }}
+                            className="inline-flex items-center gap-0.5 rounded bg-neutral-800 px-1.5 py-0.5 text-neutral-300 hover:bg-neutral-700 hover:text-white"
+                          >
+                            <FilePlus2 className="h-3 w-3" />
+                            PDF
+                          </button>
+                          <button
+                            type="button"
+                            title="Add sub-part"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCollapsedIds((prev) => {
+                                if (!prev.has(part.id)) return prev;
+                                const next = new Set(prev);
+                                next.delete(part.id);
+                                return next;
+                              });
+                              onAddPart(part.id);
+                            }}
+                            className="inline-flex items-center gap-0.5 rounded bg-neutral-800 px-1.5 py-0.5 text-neutral-300 hover:bg-neutral-700 hover:text-white"
+                          >
+                            <GitBranchPlus className="h-3 w-3" />
+                            Sub
+                          </button>
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Floating Ghost Preview while dragging a Part card */}
-          {pointerDrag?.kind === "card" &&
-            pointerDrag.active &&
-            activeDraggingCardPart && (
-              <div
-                style={{
-                  left: pointerDrag.clientX + 12,
-                  top: pointerDrag.clientY + 12,
-                }}
-                className="pointer-events-none fixed z-50 flex items-center gap-2 rounded-md border border-blue-400/80 bg-neutral-900/95 px-3 py-1.5 text-xs font-medium text-neutral-100 shadow-2xl"
-              >
-                <Box className="h-3.5 w-3.5 text-blue-400" />
-                <span>{activeDraggingCardPart.name.trim() || "Part"}</span>
-              </div>
-            )}
-        </div>
-
-        {/* Right Part Inspector Drawer */}
-        <aside className="flex w-80 shrink-0 flex-col border-l border-neutral-800 bg-neutral-950 text-xs">
-          <div className="border-b border-neutral-800 px-3 py-2.5">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
-              Part Inspector
-            </h2>
-          </div>
-
-          {!selectedPart ? (
-            <div className="flex flex-1 items-center justify-center p-6 text-center text-xs text-neutral-500">
-              Select a part on the canvas to edit its metadata, manage attached
-              drawings, or add sub-parts.
-            </div>
-          ) : (
-            <div className="flex min-h-0 flex-1 flex-col">
-              <div className="flex-1 space-y-3 overflow-y-auto p-3">
-                {selectedPart.parentId && (() => {
-                  const parent = project.parts.find(
-                    (p) => p.id === selectedPart.parentId,
-                  );
-                  if (!parent) return null;
-                  return (
-                    <div className="flex items-center justify-between gap-2 rounded-md border border-neutral-800 bg-neutral-900/80 px-2.5 py-1.5 text-[11px]">
-                      <span className="truncate text-neutral-400">
-                        Parent:{" "}
-                        <span className="font-medium text-neutral-200">
-                          {parent.name.trim() || "Untitled Part"}
-                        </span>
-                      </span>
-                      <button
-                        type="button"
-                        title="Disconnect from parent (make Root Part)"
-                        onClick={() => onReparentPart(selectedPart.id, null)}
-                        className="inline-flex shrink-0 items-center gap-1 rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300 hover:bg-rose-950 hover:text-rose-300"
-                      >
-                        <Unlink className="h-3 w-3" />
-                        Unlink
-                      </button>
                     </div>
                   );
-                })()}
-
-                <div>
-                  <label className="mb-1 block text-[11px] text-neutral-400">
-                    Part Name
-                  </label>
-                  <input
-                    ref={nameInputRef}
-                    type="text"
-                    value={selectedPart.name}
-                    placeholder="e.g. Metal C-Cover"
-                    onChange={(e) =>
-                      onUpdatePart(selectedPart.id, { name: e.target.value })
-                    }
-                    className="w-full rounded border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="mb-1 block text-[11px] text-neutral-400">
-                      Part Number
-                    </label>
-                    <input
-                      type="text"
-                      value={selectedPart.partNumber}
-                      placeholder="e.g. M1292339"
-                      onChange={(e) =>
-                        onUpdatePart(selectedPart.id, {
-                          partNumber: e.target.value,
-                        })
-                      }
-                      className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 font-mono text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[11px] text-neutral-400">
-                      Revision
-                    </label>
-                    <input
-                      type="text"
-                      value={selectedPart.revision}
-                      placeholder="e.g. Rev B"
-                      onChange={(e) =>
-                        onUpdatePart(selectedPart.id, {
-                          revision: e.target.value,
-                        })
-                      }
-                      className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 font-mono text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-[11px] text-neutral-400">
-                    Notes
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={selectedPart.notes}
-                    placeholder="Material, process, supplier notes..."
-                    onChange={(e) =>
-                      onUpdatePart(selectedPart.id, { notes: e.target.value })
-                    }
-                    className="w-full resize-none rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
-                  />
-                </div>
-
-                {/* Attached PDF Drawings */}
-                <div className="border-t border-neutral-800 pt-3">
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
-                      Drawings ({selectedPart.drawingIds.length})
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => onAttachPdf(selectedPart.id)}
-                      className="inline-flex items-center gap-1 rounded bg-neutral-800 px-2 py-1 text-[11px] font-medium text-neutral-200 hover:bg-neutral-700 hover:text-white"
-                    >
-                      <FilePlus2 className="h-3 w-3" />
-                      Attach PDF
-                    </button>
-                  </div>
-
-                  {selectedPart.drawingIds.length === 0 ? (
-                    <div className="rounded-md border border-dashed border-neutral-800 p-4 text-center text-[11px] text-neutral-500">
-                      No PDF drawings attached to this part yet.
-                    </div>
-                  ) : (
-                    <ul className="space-y-1.5">
-                      {selectedPart.drawingIds.map((drwId) => {
-                        const drw = drawingsById.get(drwId);
-                        if (!drw) return null;
-                        const count = dimCountByDrawing.get(drw.id) ?? 0;
-                        return (
-                          <li
-                            key={drw.id}
-                            className="flex items-center justify-between gap-2 rounded-md border border-neutral-800 bg-neutral-900/80 px-2.5 py-2"
-                          >
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-1.5">
-                                <FileText className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                                <span className="truncate font-mono text-[11px] text-neutral-100">
-                                  {drw.filename}
-                                </span>
-                              </div>
-                              <div className="mt-0.5 text-[10px] text-neutral-500">
-                                {drw.pageCount}{" "}
-                                {drw.pageCount === 1 ? "page" : "pages"} ·{" "}
-                                {count}{" "}
-                                {count === 1 ? "dimension" : "dimensions"}
-                              </div>
-                            </div>
-
-                            <div className="flex shrink-0 items-center gap-1">
-                              <button
-                                type="button"
-                                title="Open in Drawing module"
-                                onClick={() => onOpenDrawing(drw.id)}
-                                className="inline-flex items-center gap-1 rounded bg-neutral-800 px-2 py-1 text-[11px] text-neutral-200 hover:bg-blue-600 hover:text-white"
-                              >
-                                <ExternalLink className="h-3 w-3" />
-                                Open
-                              </button>
-                              <button
-                                type="button"
-                                title="Remove drawing"
-                                onClick={() =>
-                                  onDetachPdf(selectedPart.id, drw.id)
-                                }
-                                className="rounded p-1 text-neutral-500 hover:bg-rose-950 hover:text-rose-400"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between border-t border-neutral-800 p-3">
-                <button
-                  type="button"
-                  onClick={() => onDeletePart(selectedPart.id)}
-                  className="inline-flex items-center gap-1 rounded px-2 py-1.5 text-xs text-neutral-400 hover:bg-rose-950/70 hover:text-rose-300"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Delete Part
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCollapsedIds((prev) => {
-                      if (!prev.has(selectedPart.id)) return prev;
-                      const next = new Set(prev);
-                      next.delete(selectedPart.id);
-                      return next;
-                    });
-                    onAddPart(selectedPart.id);
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded bg-neutral-800 px-3 py-1.5 text-xs font-medium text-neutral-100 hover:bg-neutral-700"
-                >
-                  <GitBranchPlus className="h-3.5 w-3.5" />
-                  Add Sub-part
-                </button>
+                })}
               </div>
             </div>
           )}
-        </aside>
+        </div>
+
+        {/* Floating Ghost Preview while dragging a Part card */}
+        {pointerDrag?.kind === "card" &&
+          pointerDrag.active &&
+          activeDraggingCardPart && (
+            <div
+              style={{
+                left: pointerDrag.clientX + 12,
+                top: pointerDrag.clientY + 12,
+              }}
+              className="pointer-events-none fixed z-50 flex items-center gap-2 rounded-md border border-blue-400/80 bg-neutral-900/95 px-3 py-1.5 text-xs font-medium text-neutral-100 shadow-2xl"
+            >
+              <Box className="h-3.5 w-3.5 text-blue-400" />
+              <span>{activeDraggingCardPart.name.trim() || "Part"}</span>
+            </div>
+          )}
       </div>
     </div>
   );
