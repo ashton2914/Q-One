@@ -15,6 +15,7 @@ export interface BalloonOverlayProps {
   width: number;
   height: number;
   selectedDimensionId: string | null;
+  editingDimensionId: string | null;
   placingDimensionId: string | null;
   onPlaceMarker: (dimensionId: string, marker: MarkerPosition) => void;
   onSelectDimension: (dimensionId: string) => void;
@@ -67,6 +68,7 @@ export function BalloonOverlay({
   width,
   height,
   selectedDimensionId,
+  editingDimensionId,
   placingDimensionId,
   onPlaceMarker,
   onSelectDimension,
@@ -164,13 +166,18 @@ export function BalloonOverlay({
     setDrawState(null);
   };
 
-  // Drag-to-move or corner-resize an existing region box
+  // Drag-to-move or corner-resize an existing region box (only when that dimension is in edit mode)
   const startBoxDrag = (
     e: React.PointerEvent<HTMLElement>,
     dim: Dimension,
     mode: "move" | "resize",
   ) => {
     if (placingDimensionId || e.button !== 0 || !dim.marker) return;
+    if (dim.id !== editingDimensionId) {
+      e.stopPropagation();
+      onSelectDimension(dim.id);
+      return;
+    }
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
     const mw = dim.marker.width || DEFAULT_CLICK_BOX_W;
@@ -316,6 +323,7 @@ export function BalloonOverlay({
         const boxW = Math.max(12, mw * width);
         const boxH = Math.max(10, mh * height);
         const isSelected = dim.id === selectedDimensionId;
+        const isEditing = dim.id === editingDimensionId;
         const label = dim.name.trim() || `#${dim.balloonNumber}`;
         const tol = formatTolerance(dim.upperTol, dim.lowerTol);
         const tooltip = [
@@ -352,9 +360,11 @@ export function BalloonOverlay({
             } ${
               placingDimensionId
                 ? "pointer-events-none opacity-65"
-                : isDraggingThis
-                  ? "cursor-grabbing"
-                  : "cursor-grab"
+                : !isEditing
+                  ? "cursor-pointer"
+                  : isDraggingThis
+                    ? "cursor-grabbing"
+                    : "cursor-grab"
             }`}
           >
             <span
@@ -369,7 +379,7 @@ export function BalloonOverlay({
               {label}
             </span>
 
-            {isSelected && !placingDimensionId && (
+            {isEditing && !placingDimensionId && (
               <div
                 onMouseDown={(e) => e.preventDefault()}
                 onPointerDown={(e) => startBoxDrag(e, dim, "resize")}

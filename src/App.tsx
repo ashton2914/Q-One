@@ -512,6 +512,7 @@ export default function App() {
             scrollToPageRequest={scrollToPageRequest}
             dimensions={project.dimensions}
             selectedDimensionId={selectedDimensionId}
+            editingDimensionId={editingDimensionId}
             placingDimensionId={placingDimensionId}
             onPageCountLoaded={handlePageCountLoaded}
             onPageChange={setCurrentPage}

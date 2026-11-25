@@ -57,6 +57,7 @@ export interface PdfViewerProps {
   scrollToPageRequest: ScrollToPageRequest | null;
   dimensions: Dimension[];
   selectedDimensionId: string | null;
+  editingDimensionId: string | null;
   placingDimensionId: string | null;
   onPageCountLoaded: (pageCount: number) => void;
   onPageChange: (page: number) => void;
@@ -84,6 +85,7 @@ interface PdfPageItemProps {
   drawingId: string | null;
   dimensions: Dimension[];
   selectedDimensionId: string | null;
+  editingDimensionId: string | null;
   placingDimensionId: string | null;
   scrollContainer: HTMLDivElement | null;
   registerPageEl: (page: number, el: HTMLDivElement | null) => void;
@@ -112,6 +114,7 @@ const PdfPageItem = memo(function PdfPageItem({
   drawingId,
   dimensions,
   selectedDimensionId,
+  editingDimensionId,
   placingDimensionId,
   scrollContainer,
   registerPageEl,
@@ -429,6 +432,7 @@ const PdfPageItem = memo(function PdfPageItem({
           width={width}
           height={height}
           selectedDimensionId={selectedDimensionId}
+          editingDimensionId={editingDimensionId}
           placingDimensionId={placingDimensionId}
           onPlaceMarker={onPlaceMarker}
           onSelectDimension={onSelectDimension}
@@ -468,6 +472,7 @@ export function PdfViewer({
   scrollToPageRequest,
   dimensions,
   selectedDimensionId,
+  editingDimensionId,
   placingDimensionId,
   onPageCountLoaded,
   onPageChange,
@@ -1039,6 +1044,7 @@ export function PdfViewer({
                 drawingId={drawingId}
                 dimensions={dimensions}
                 selectedDimensionId={selectedDimensionId}
+                editingDimensionId={editingDimensionId}
                 placingDimensionId={placingDimensionId}
                 scrollContainer={containerRef.current}
                 registerPageEl={registerPageEl}
