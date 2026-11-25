@@ -272,7 +272,7 @@ export default function App() {
       const initialPartId = ownerPart?.id ?? normalized.parts[0]?.id ?? null;
       setSelectedPartId(initialPartId);
       setActivePartId(initialPartId);
-      setDrawingSidebarView(opened.activeDrawingId ? "dimensions" : "drawings");
+      setDrawingSidebarView("drawings");
       setActiveDrawingId(opened.activeDrawingId);
       setPdfBytes(opened.pdfBytes);
       setCurrentPage(1);
@@ -287,7 +287,7 @@ export default function App() {
       setEditingDimensionId(null);
       setPlacingDimensionId(null);
       setIsDirty(false);
-      setActiveModule(opened.activeDrawingId ? "drawing" : "project");
+      setActiveModule("project");
       if (opened.activeDrawingId) {
         setFitRequestKey((k) => k + 1);
       }
@@ -686,9 +686,12 @@ export default function App() {
       if (editingDimensionId) {
         handleCancelEditing();
       }
+      const isSwitchingPart = partId !== activePartId;
       setActivePartId(partId);
       setSelectedPartId(partId);
-      setDrawingSidebarView("drawings");
+      if (isSwitchingPart) {
+        setDrawingSidebarView("drawings");
+      }
 
       const partLabel = part.name.trim() || "Untitled Part";
       if (part.drawingIds.length === 0) {
@@ -726,6 +729,7 @@ export default function App() {
     },
     [
       project,
+      activePartId,
       editingDimensionId,
       handleCancelEditing,
       activeDrawingId,
