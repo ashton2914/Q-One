@@ -14,7 +14,8 @@ interface RawImportedPdfPayload {
 
 interface RawOpenedProjectPayload {
   project: ProjectData;
-  pdfBytes: number[];
+  activeDrawingId: string | null;
+  pdfBytes: number[] | null;
 }
 
 export async function pickPdfFile(): Promise<string | null> {
@@ -64,6 +65,19 @@ export async function importPdf(path: string): Promise<ImportedPdfPayload> {
   };
 }
 
+export async function getDrawingBytes(drawingId: string): Promise<Uint8Array> {
+  const raw = await invoke<number[]>("get_drawing_bytes", { drawingId });
+  return new Uint8Array(raw);
+}
+
+export async function removeDrawingBytes(drawingId: string): Promise<void> {
+  await invoke<void>("remove_drawing_bytes", { drawingId });
+}
+
+export async function clearDrawings(): Promise<void> {
+  await invoke<void>("clear_drawings");
+}
+
 export async function saveProject(
   path: string,
   project: ProjectData,
@@ -75,6 +89,7 @@ export async function openProject(path: string): Promise<OpenedProjectPayload> {
   const raw = await invoke<RawOpenedProjectPayload>("open_project", { path });
   return {
     project: raw.project,
-    pdfBytes: new Uint8Array(raw.pdfBytes),
+    activeDrawingId: raw.activeDrawingId,
+    pdfBytes: raw.pdfBytes ? new Uint8Array(raw.pdfBytes) : null,
   };
 }

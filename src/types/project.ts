@@ -1,5 +1,7 @@
 export type DimensionUnit = "mm" | "in" | "deg";
 
+export type ActiveModule = "project" | "drawing";
+
 export interface MarkerPosition {
   drawingId: string;
   page: number;
@@ -11,6 +13,7 @@ export interface MarkerPosition {
 
 export interface Dimension {
   id: string;
+  drawingId: string | null;
   balloonNumber: number;
   dimensionType: string;
   name: string;
@@ -21,6 +24,16 @@ export interface Dimension {
   unit: DimensionUnit;
   notes: string;
   marker: MarkerPosition | null;
+}
+
+export interface Part {
+  id: string;
+  parentId: string | null;
+  name: string;
+  partNumber: string;
+  revision: string;
+  notes: string;
+  drawingIds: string[];
 }
 
 export interface DrawingEntry {
@@ -36,6 +49,7 @@ export interface ProjectData {
   name: string;
   createdAt: string;
   updatedAt: string;
+  parts: Part[];
   drawings: DrawingEntry[];
   dimensions: Dimension[];
 }
@@ -48,5 +62,6 @@ export interface ImportedPdfPayload {
 
 export interface OpenedProjectPayload {
   project: ProjectData;
-  pdfBytes: Uint8Array;
+  activeDrawingId: string | null;
+  pdfBytes: Uint8Array | null;
 }

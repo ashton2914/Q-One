@@ -19,9 +19,13 @@ export function nextBalloonNumber(dimensions: readonly Dimension[]): number {
   return max + 1;
 }
 
-export function createDimension(existing: readonly Dimension[]): Dimension {
+export function createDimension(
+  existing: readonly Dimension[],
+  drawingId: string | null = null,
+): Dimension {
   return {
     id: generateId(),
+    drawingId,
     balloonNumber: nextBalloonNumber(existing),
     dimensionType: "",
     name: "",
@@ -110,6 +114,17 @@ export function createProjectFromPdf(
     name: baseName,
     createdAt: now,
     updatedAt: now,
+    parts: [
+      {
+        id: generateId(),
+        parentId: null,
+        name: baseName,
+        partNumber: "",
+        revision: "",
+        notes: "",
+        drawingIds: [drawingId],
+      },
+    ],
     drawings: [
       {
         id: drawingId,

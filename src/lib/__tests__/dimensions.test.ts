@@ -16,6 +16,7 @@ describe("dimensions", () => {
     const dims: Dimension[] = [
       {
         id: "a",
+        drawingId: "d-1",
         balloonNumber: 1,
         dimensionType: "",
         name: "A",
@@ -29,6 +30,7 @@ describe("dimensions", () => {
       },
       {
         id: "c",
+        drawingId: "d-1",
         balloonNumber: 3,
         dimensionType: "",
         name: "C",
@@ -98,6 +100,7 @@ describe("dimensions", () => {
     const existing: Dimension[] = [
       {
         id: "uuid-1",
+        drawingId: "d-1",
         balloonNumber: 1,
         dimensionType: "CTQ",
         name: "103",
@@ -111,6 +114,7 @@ describe("dimensions", () => {
       },
       {
         id: "uuid-2",
+        drawingId: "d-1",
         balloonNumber: 2,
         dimensionType: "CTQ",
         name: "512A",
