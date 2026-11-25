@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+dist/
+dist-ssr/
+
+# Rust / Tauri build outputs
+src-tauri/target/
+src-tauri/gen/
+
+# Logs & OS
+*.log
+.DS_Store
+Thumbs.db
+
+# Superpowers scratch
+.superpowers/
+
+# Local project test files
+*.dmone
