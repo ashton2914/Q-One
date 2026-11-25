@@ -64,10 +64,35 @@ function InlineEditCard({
 }: InlineEditCardProps) {
   const typeInputRef = useRef<HTMLInputElement | null>(null);
   const idInputRef = useRef<HTMLInputElement | null>(null);
-  const lastTypeInputLenRef = useRef<number>(
-    (dimension.dimensionType ?? "").length,
-  );
   const [idError, setIdError] = useState<string | null>(null);
+
+  // Combine MRU history with any types already present on other dimensions in this project
+  const knownTypes: string[] = [];
+  const seenLower = new Set<string>();
+  for (const t of typeHistory) {
+    const trimmed = t.trim();
+    if (trimmed && !seenLower.has(trimmed.toLowerCase())) {
+      seenLower.add(trimmed.toLowerCase());
+      knownTypes.push(trimmed);
+    }
+  }
+  for (const d of allDimensions) {
+    if (d.id === dimension.id) continue;
+    const trimmed = (d.dimensionType ?? "").trim();
+    if (trimmed && !seenLower.has(trimmed.toLowerCase())) {
+      seenLower.add(trimmed.toLowerCase());
+      knownTypes.push(trimmed);
+    }
+  }
+
+  const typedType = dimension.dimensionType ?? "";
+  const typeMatch = findTypeCompletion(typedType, knownTypes);
+  const ghostSuffix =
+    typeMatch &&
+    typedType.length > 0 &&
+    typeMatch.length > typedType.length
+      ? typeMatch.slice(typedType.length)
+      : "";
 
   useEffect(() => {
     const input = typeInputRef.current;
@@ -89,31 +114,24 @@ function InlineEditCard({
     onDone();
   };
 
-  const handleTypeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value;
-    const isDeleting = raw.length < lastTypeInputLenRef.current;
-    const inputEvent = e.nativeEvent as InputEvent;
-    const isComposing = Boolean(inputEvent.isComposing);
-
-    if (!isDeleting && !isComposing && raw.length > 0) {
-      const match = findTypeCompletion(raw, typeHistory);
-      if (match && match.length >= raw.length) {
-        lastTypeInputLenRef.current = raw.length;
-        onUpdate(dimension.id, { dimensionType: match });
-        const inputEl = e.target;
-        const start = raw.length;
-        const end = match.length;
-        window.requestAnimationFrame(() => {
-          if (document.activeElement === inputEl) {
-            inputEl.setSelectionRange(start, end);
-          }
-        });
-        return;
+  const handleTypeKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing) return;
+    if (e.key === "Tab" && !e.shiftKey && typeMatch && typedType.length > 0) {
+      if (typeMatch !== typedType) {
+        onUpdate(dimension.id, { dimensionType: typeMatch });
       }
+      // Allow default Tab to advance focus straight into ID *
+      return;
     }
-
-    lastTypeInputLenRef.current = raw.length;
-    onUpdate(dimension.id, { dimensionType: raw });
+    if (
+      e.key === "ArrowRight" &&
+      ghostSuffix &&
+      typeMatch &&
+      e.currentTarget.selectionStart === typedType.length
+    ) {
+      e.preventDefault();
+      onUpdate(dimension.id, { dimensionType: typeMatch });
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -175,14 +193,28 @@ function InlineEditCard({
             <label className="mb-1 block text-[11px] text-neutral-400">
               Type
             </label>
-            <input
-              ref={typeInputRef}
-              type="text"
-              value={dimension.dimensionType ?? ""}
-              placeholder="e.g. CTQ"
-              onChange={handleTypeChange}
-              className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
-            />
+            <div className="relative rounded bg-neutral-950">
+              {ghostSuffix && (
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 flex items-center overflow-hidden whitespace-pre border border-transparent px-2 py-1 font-mono text-xs"
+                >
+                  <span className="invisible">{typedType}</span>
+                  <span className="text-neutral-500">{ghostSuffix}</span>
+                </div>
+              )}
+              <input
+                ref={typeInputRef}
+                type="text"
+                value={typedType}
+                placeholder="e.g. CTF"
+                onKeyDown={handleTypeKeyDown}
+                onChange={(e) =>
+                  onUpdate(dimension.id, { dimensionType: e.target.value })
+                }
+                className="relative z-10 w-full rounded border border-neutral-700 bg-transparent px-2 py-1 font-mono text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
+              />
+            </div>
           </div>
 
           <div>
