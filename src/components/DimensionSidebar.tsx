@@ -12,6 +12,8 @@ import {
 import {
   findTypeCompletion,
   formatTolerance,
+  mapPhysicalKeyToTypeChar,
+  sanitizeDimensionType,
   validateDimensionId,
 } from "../lib/dimensions";
 import type { Dimension } from "../types/project";
@@ -105,7 +107,6 @@ function InlineEditCard({
   };
 
   const handleTypeKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.nativeEvent.isComposing) return;
     if (e.key === "Tab" && !e.shiftKey && typeMatch && typedType.length > 0) {
       if (typeMatch !== typedType) {
         onUpdate(dimension.id, { dimensionType: typeMatch });
@@ -121,6 +122,27 @@ function InlineEditCard({
     ) {
       e.preventDefault();
       onUpdate(dimension.id, { dimensionType: typeMatch });
+      return;
+    }
+
+    // Bypass OS IME (e.g. macOS Chinese Pinyin) by mapping physical ASCII keys directly to uppercase
+    if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+      const mapped = mapPhysicalKeyToTypeChar(e.code, e.shiftKey);
+      if (mapped !== null) {
+        e.preventDefault();
+        const input = e.currentTarget;
+        const start = input.selectionStart ?? typedType.length;
+        const end = input.selectionEnd ?? typedType.length;
+        const nextVal =
+          typedType.slice(0, start) + mapped + typedType.slice(end);
+        onUpdate(dimension.id, { dimensionType: nextVal });
+        const nextCaret = start + mapped.length;
+        window.requestAnimationFrame(() => {
+          if (document.activeElement === input) {
+            input.setSelectionRange(nextCaret, nextCaret);
+          }
+        });
+      }
     }
   };
 
@@ -198,11 +220,18 @@ function InlineEditCard({
                 type="text"
                 value={typedType}
                 placeholder="e.g. CTF"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                style={{ imeMode: "disabled" } as React.CSSProperties}
                 onKeyDown={handleTypeKeyDown}
                 onChange={(e) =>
-                  onUpdate(dimension.id, { dimensionType: e.target.value })
+                  onUpdate(dimension.id, {
+                    dimensionType: sanitizeDimensionType(e.target.value),
+                  })
                 }
-                className="relative z-10 w-full rounded border border-neutral-700 bg-transparent px-2 py-1 font-mono text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
+                className="relative z-10 w-full rounded border border-neutral-700 bg-transparent px-2 py-1 font-mono text-xs uppercase text-neutral-100 placeholder:normal-case placeholder:text-neutral-600 focus:border-neutral-400 focus:outline-none"
               />
             </div>
           </div>

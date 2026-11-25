@@ -81,6 +81,29 @@ export function validateDimensionId(
   return null;
 }
 
+export function sanitizeDimensionType(raw: string): string {
+  return raw.replace(/[^A-Za-z0-9._/-]/g, "").toUpperCase();
+}
+
+export function mapPhysicalKeyToTypeChar(
+  code: string,
+  shiftKey: boolean,
+): string | null {
+  if (/^Key[A-Z]$/.test(code)) {
+    return code.slice(3);
+  }
+  if (/^Digit[0-9]$/.test(code) && !shiftKey) {
+    return code.slice(5);
+  }
+  if (/^Numpad[0-9]$/.test(code)) {
+    return code.slice(6);
+  }
+  if (code === "Minus") return shiftKey ? "_" : "-";
+  if (code === "Period" && !shiftKey) return ".";
+  if (code === "Slash" && !shiftKey) return "/";
+  return null;
+}
+
 export function formatTolerance(upperTol: string, lowerTol: string): string {
   const upper = upperTol.trim();
   const lower = lowerTol.trim();
