@@ -388,7 +388,10 @@ export default function App() {
       });
       setPlacingDimensionId(null);
       setSelectedDimensionId(dimensionId);
-      if (editingDimensionId === dimensionId) {
+      if (
+        editingDimensionId === dimensionId &&
+        document.activeElement?.tagName !== "INPUT"
+      ) {
         setFocusNameKey((k) => k + 1);
       }
       markDirty();

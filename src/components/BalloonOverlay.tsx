@@ -115,6 +115,7 @@ export function BalloonOverlay({
   return (
     <div
       ref={overlayRef}
+      onMouseDown={(e) => e.preventDefault()}
       onClick={handleBackgroundClick}
       style={{ width, height }}
       className={`absolute inset-0 select-none ${
@@ -143,6 +144,7 @@ export function BalloonOverlay({
             type="button"
             title={tooltip}
             aria-label={`Dimension balloon ${dim.balloonNumber}`}
+            onMouseDown={(e) => e.preventDefault()}
             onPointerDown={(e) => handlePinPointerDown(e, dim)}
             onPointerMove={handlePinPointerMove}
             onPointerUp={handlePinPointerUp}

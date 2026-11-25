@@ -932,6 +932,7 @@ export function PdfViewer({
 
       <div
         ref={containerRef}
+        onMouseDown={(e) => e.preventDefault()}
         onPointerDown={handleViewportPointerDown}
         onPointerMove={handleViewportPointerMove}
         onPointerUp={stopPanning}
