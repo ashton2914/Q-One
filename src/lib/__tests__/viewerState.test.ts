@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computeFitZoom,
+  findMostVisiblePage,
   shouldApplyFit,
   shouldBlockWindowClose,
   shouldClearDirtyAfterSave,
@@ -37,5 +38,16 @@ describe("viewerState review fixes", () => {
   it("blocks window close when project has unsaved changes", () => {
     expect(shouldBlockWindowClose(true)).toBe(true);
     expect(shouldBlockWindowClose(false)).toBe(false);
+  });
+
+  it("identifies the most visible page during continuous vertical scrolling", () => {
+    const pages = [
+      { page: 1, top: 0, height: 800 },
+      { page: 2, top: 824, height: 800 },
+      { page: 3, top: 1648, height: 800 },
+    ];
+    expect(findMostVisiblePage(0, 600, pages)).toBe(1);
+    expect(findMostVisiblePage(600, 600, pages)).toBe(2);
+    expect(findMostVisiblePage(1500, 600, pages)).toBe(3);
   });
 });

@@ -5,7 +5,7 @@ import { FilePlus2, FolderOpen } from "lucide-react";
 import { DimensionEditor } from "./components/DimensionEditor";
 import { DimensionSidebar } from "./components/DimensionSidebar";
 import { MenuBar } from "./components/MenuBar";
-import { PdfViewer } from "./components/PdfViewer";
+import { PdfViewer, type ScrollToPageRequest } from "./components/PdfViewer";
 import { createDimension, createProjectFromPdf } from "./lib/dimensions";
 import {
   shouldBlockWindowClose,
@@ -33,6 +33,8 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [zoom, setZoom] = useState<number>(1);
   const [fitRequestKey, setFitRequestKey] = useState<number>(0);
+  const [scrollToPageRequest, setScrollToPageRequest] =
+    useState<ScrollToPageRequest | null>(null);
   const [selectedDimensionId, setSelectedDimensionId] = useState<string | null>(
     null,
   );
@@ -256,11 +258,12 @@ export default function App() {
     (id: string) => {
       setSelectedDimensionId(id);
       const dim = project?.dimensions.find((d) => d.id === id);
-      if (dim?.marker && dim.marker.page !== currentPage) {
+      if (dim?.marker) {
         setCurrentPage(dim.marker.page);
+        setScrollToPageRequest({ page: dim.marker.page, key: Date.now() });
       }
     },
-    [project, currentPage],
+    [project],
   );
 
   const handleUpdateDimension = useCallback(
@@ -414,6 +417,7 @@ export default function App() {
             pageCount={pageCount}
             zoom={zoom}
             fitRequestKey={fitRequestKey}
+            scrollToPageRequest={scrollToPageRequest}
             dimensions={project.dimensions}
             selectedDimensionId={selectedDimensionId}
             placingDimensionId={placingDimensionId}
