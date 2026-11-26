@@ -14,7 +14,8 @@ interface RawImportedPdfPayload {
 
 interface RawOpenedProjectPayload {
   project: ProjectData;
-  pdfBytes: number[];
+  activeDrawingId: string | null;
+  pdfBytes: number[] | null;
 }
 
 export async function pickPdfFile(): Promise<string | null> {
@@ -29,10 +30,10 @@ export async function pickPdfFile(): Promise<string | null> {
 
 export async function pickOpenProjectFile(): Promise<string | null> {
   const selected = await open({
-    title: "Open DM-One Project",
+    title: "Open Q-One Project",
     multiple: false,
     directory: false,
-    filters: [{ name: "DM-One Project", extensions: ["dmone"] }],
+    filters: [{ name: "Q-One Project", extensions: ["qone"] }],
   });
   return typeof selected === "string" ? selected : null;
 }
@@ -41,18 +42,18 @@ export async function pickSaveProjectFile(
   defaultName: string,
 ): Promise<string | null> {
   const safeBase = defaultName.trim() || "project";
-  const defaultPath = safeBase.toLowerCase().endsWith(".dmone")
+  const defaultPath = safeBase.toLowerCase().endsWith(".qone")
     ? safeBase
-    : `${safeBase}.dmone`;
+    : `${safeBase}.qone`;
   const selected = await save({
-    title: "Save DM-One Project",
+    title: "Save Q-One Project",
     defaultPath,
-    filters: [{ name: "DM-One Project", extensions: ["dmone"] }],
+    filters: [{ name: "Q-One Project", extensions: ["qone"] }],
   });
   if (!selected) return null;
-  return selected.toLowerCase().endsWith(".dmone")
+  return selected.toLowerCase().endsWith(".qone")
     ? selected
-    : `${selected}.dmone`;
+    : `${selected}.qone`;
 }
 
 export async function importPdf(path: string): Promise<ImportedPdfPayload> {
@@ -62,6 +63,19 @@ export async function importPdf(path: string): Promise<ImportedPdfPayload> {
     filename: raw.filename,
     pdfBytes: new Uint8Array(raw.pdfBytes),
   };
+}
+
+export async function getDrawingBytes(drawingId: string): Promise<Uint8Array> {
+  const raw = await invoke<number[]>("get_drawing_bytes", { drawingId });
+  return new Uint8Array(raw);
+}
+
+export async function removeDrawingBytes(drawingId: string): Promise<void> {
+  await invoke<void>("remove_drawing_bytes", { drawingId });
+}
+
+export async function clearDrawings(): Promise<void> {
+  await invoke<void>("clear_drawings");
 }
 
 export async function saveProject(
@@ -75,6 +89,7 @@ export async function openProject(path: string): Promise<OpenedProjectPayload> {
   const raw = await invoke<RawOpenedProjectPayload>("open_project", { path });
   return {
     project: raw.project,
-    pdfBytes: new Uint8Array(raw.pdfBytes),
+    activeDrawingId: raw.activeDrawingId,
+    pdfBytes: raw.pdfBytes ? new Uint8Array(raw.pdfBytes) : null,
   };
 }

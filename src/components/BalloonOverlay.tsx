@@ -5,6 +5,7 @@ import {
   normalizedToPixel,
   normalizeRectFromPoints,
 } from "../lib/coordinates";
+import { getAnnotationKind } from "../lib/annotations";
 import { formatTolerance } from "../lib/dimensions";
 import type { Dimension, MarkerPosition } from "../types/project";
 
@@ -85,6 +86,18 @@ export function BalloonOverlay({
       d.marker.page === currentPage,
   );
 
+  const placingDimension = placingDimensionId
+    ? dimensions.find((d) => d.id === placingDimensionId) ?? null
+    : null;
+  const isPlacingPoint = placingDimension
+    ? getAnnotationKind(placingDimension) === "point"
+    : false;
+
+  const selectedDimension = selectedDimensionId
+    ? dimensions.find((d) => d.id === selectedDimensionId) ?? null
+    : null;
+  const linkedPointIdSet = new Set(selectedDimension?.linkedPointIds ?? []);
+
   // Drag-to-box region drawing when placingDimensionId is active
   const handleOverlayPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!placingDimensionId || e.button !== 0 || !overlayRef.current) return;
@@ -130,6 +143,21 @@ export function BalloonOverlay({
     e.stopPropagation();
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+
+    if (isPlacingPoint) {
+      const px = Math.min(1, Math.max(0, drawState.currentX));
+      const py = Math.min(1, Math.max(0, drawState.currentY));
+      setDrawState(null);
+      onPlaceMarker(placingDimensionId, {
+        drawingId,
+        page: currentPage,
+        x: px,
+        y: py,
+        width: 0,
+        height: 0,
+      });
+      return;
     }
 
     const box = drawState.dragged
@@ -180,8 +208,9 @@ export function BalloonOverlay({
     }
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
-    const mw = dim.marker.width || DEFAULT_CLICK_BOX_W;
-    const mh = dim.marker.height || DEFAULT_CLICK_BOX_H;
+    const isPoint = getAnnotationKind(dim) === "point";
+    const mw = isPoint ? 0 : dim.marker.width || DEFAULT_CLICK_BOX_W;
+    const mh = isPoint ? 0 : dim.marker.height || DEFAULT_CLICK_BOX_H;
     setBoxDrag({
       mode,
       dimensionId: dim.id,
@@ -284,7 +313,7 @@ export function BalloonOverlay({
   };
 
   const previewDrawBox =
-    drawState && drawState.dragged
+    drawState && drawState.dragged && !isPlacingPoint
       ? normalizeRectFromPoints(
           drawState.startX,
           drawState.startY,
@@ -322,19 +351,93 @@ export function BalloonOverlay({
         const { px, py } = normalizedToPixel(x, y, width, height);
         const boxW = Math.max(12, mw * width);
         const boxH = Math.max(10, mh * height);
+        const isPoint = getAnnotationKind(dim) === "point";
         const isSelected = dim.id === selectedDimensionId;
         const isEditing = dim.id === editingDimensionId;
         const label = dim.name.trim() || "New";
         const tol = formatTolerance(dim.upperTol, dim.lowerTol);
-        const tooltip = [
-          dim.dimensionType?.trim(),
-          dim.name.trim() || "New Dimension",
-          dim.nominal
-            ? `${dim.quantity > 1 ? `${dim.quantity}X ` : ""}${dim.nominal}${tol ? ` ${tol}` : ""} ${dim.unit}`
-            : "",
-        ]
-          .filter(Boolean)
-          .join(" — ");
+        const tooltip = isPoint
+          ? [
+              `Point ${label}`,
+              dim.point
+                ? `(${dim.point.x || "—"}, ${dim.point.y || "—"}, ${dim.point.z || "—"})`
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" ")
+          : [
+              dim.dimensionType?.trim(),
+              dim.name.trim() || "New Dimension",
+              dim.nominal
+                ? `${dim.quantity > 1 ? `${dim.quantity}X ` : ""}${dim.nominal}${tol ? ` ${tol}` : ""} ${dim.unit}`
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" — ");
+
+        if (isPoint) {
+          const isLinkedToSelected = linkedPointIdSet.has(dim.id);
+          const placeLabelBelow = py < 18;
+          return (
+            <div
+              key={dim.id}
+              title={tooltip}
+              aria-label={`Point marker ${label}`}
+              onMouseDown={(e) => e.preventDefault()}
+              onPointerDown={(e) => startBoxDrag(e, dim, "move")}
+              onPointerMove={handleBoxPointerMove}
+              onPointerUp={handleBoxPointerUp}
+              onPointerCancel={handleBoxPointerCancel}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                left: `${px}px`,
+                top: `${py}px`,
+              }}
+              className={`absolute -translate-x-1/2 -translate-y-1/2 ${
+                isSelected || isLinkedToSelected ? "z-30" : "z-20"
+              } ${
+                placingDimensionId
+                  ? "pointer-events-none opacity-65"
+                  : !isEditing
+                    ? "cursor-pointer"
+                    : isDraggingThis
+                      ? "cursor-grabbing"
+                      : "cursor-grab"
+              }`}
+            >
+              {/* Crisp precision point dot with subtle outer halo */}
+              <div
+                className={`flex h-4 w-4 items-center justify-center rounded-full border-[1.5px] transition-colors ${
+                  isSelected
+                    ? "border-blue-400 bg-blue-500/25 shadow-[0_0_0_2px_rgba(59,130,246,0.3)]"
+                    : isLinkedToSelected
+                      ? "border-blue-300 bg-blue-500/25 shadow-[0_0_0_3px_rgba(59,130,246,0.28)]"
+                      : "border-purple-400 bg-purple-500/20 hover:border-purple-300"
+                }`}
+              >
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${
+                    isSelected || isLinkedToSelected
+                      ? "bg-blue-400"
+                      : "bg-purple-400"
+                  }`}
+                />
+              </div>
+
+              <span
+                className={`pointer-events-none absolute left-1/2 -translate-x-1/2 whitespace-nowrap rounded-[2px] px-1 py-[1px] font-mono text-[10px] font-semibold leading-tight shadow-sm ${
+                  placeLabelBelow ? "top-full mt-[2px]" : "bottom-full mb-[2px]"
+                } ${
+                  isSelected || isLinkedToSelected
+                    ? "bg-blue-600/95 text-white"
+                    : "bg-purple-600/90 text-white"
+                }`}
+              >
+                {label}
+              </span>
+            </div>
+          );
+        }
 
         const placeLabelInside = py < 16;
 

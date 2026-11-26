@@ -2,12 +2,21 @@ import { describe, expect, it } from "vitest";
 import {
   createDimension,
   createProjectFromPdf,
+  duplicateDimension,
   findTypeCompletion,
   formatTolerance,
   nextBalloonNumber,
   rememberDimensionType,
   validateDimensionId,
 } from "../dimensions";
+import {
+  createDefaultGdtSpec,
+  createDefaultPointSpec,
+  getAvailableDatums,
+  getGdtRules,
+  getGdtSymbolGlyph,
+  sanitizeGdtSpec,
+} from "../annotations";
 import type { Dimension } from "../../types/project";
 
 describe("dimensions", () => {
@@ -16,6 +25,7 @@ describe("dimensions", () => {
     const dims: Dimension[] = [
       {
         id: "a",
+        drawingId: "d-1",
         balloonNumber: 1,
         dimensionType: "",
         name: "A",
@@ -29,6 +39,7 @@ describe("dimensions", () => {
       },
       {
         id: "c",
+        drawingId: "d-1",
         balloonNumber: 3,
         dimensionType: "",
         name: "C",
@@ -98,6 +109,7 @@ describe("dimensions", () => {
     const existing: Dimension[] = [
       {
         id: "uuid-1",
+        drawingId: "d-1",
         balloonNumber: 1,
         dimensionType: "CTQ",
         name: "103",
@@ -111,6 +123,7 @@ describe("dimensions", () => {
       },
       {
         id: "uuid-2",
+        drawingId: "d-1",
         balloonNumber: 2,
         dimensionType: "CTQ",
         name: "512A",
@@ -140,5 +153,92 @@ describe("dimensions", () => {
     expect(validateDimensionId("512A", "uuid-2", existing)).toBeNull();
     // Brand new unique ID is valid
     expect(validateDimensionId("104", "uuid-new", existing)).toBeNull();
+  });
+
+  it("extracts available Datum names and scopes ID uniqueness per annotation kind", () => {
+    const dims: Dimension[] = [
+      { ...createDimension([], "d-1"), id: "d1", kind: "datum", name: "A" },
+      { ...createDimension([], "d-1"), id: "d2", kind: "datum", name: "B" },
+      { ...createDimension([], "d-1"), id: "d3", kind: "linear", name: "1" },
+      { ...createDimension([], "d-1"), id: "d4", kind: "note", name: "1" },
+    ];
+
+    expect(getAvailableDatums(dims)).toEqual(["A", "B"]);
+    expect(validateDimensionId("1", "new-note", dims, "note")).toContain(
+      "already exists",
+    );
+    expect(validateDimensionId("1", "new-point", dims, "point")).toBeNull();
+    expect(validateDimensionId("", "new-datum", dims, "datum")).toBe(
+      "Datum name is required.",
+    );
+    expect(getGdtSymbolGlyph("position")).toBe("⌖");
+    expect(createDefaultGdtSpec().datums).toHaveLength(3);
+    expect(createDefaultPointSpec().datums).toHaveLength(3);
+  });
+
+  it("enforces ASME Y14.5 applicability rules per GD&T symbol and sanitizes disallowed fields", () => {
+    const flatness = getGdtRules("flatness");
+    expect(flatness.allowDiameterZone).toBe(false);
+    expect(flatness.allowMaterialCondition).toBe(false);
+    expect(flatness.allowDatums).toBe(false);
+
+    const runout = getGdtRules("total_runout");
+    expect(runout.allowDiameterZone).toBe(false);
+    expect(runout.allowMaterialCondition).toBe(false);
+    expect(runout.allowDatums).toBe(true);
+    expect(runout.allowDatumMaterialCondition).toBe(false);
+
+    const profile = getGdtRules("profile_surface");
+    expect(profile.allowDiameterZone).toBe(false);
+    expect(profile.allowMaterialCondition).toBe(false);
+    expect(profile.allowDatums).toBe(true);
+    expect(profile.allowDatumMaterialCondition).toBe(true);
+
+    const sanitized = sanitizeGdtSpec({
+      symbol: "flatness",
+      diameterZone: true,
+      tolerance: "0.08",
+      materialCondition: "MMC",
+      datums: [
+        { datum: "A", materialCondition: "MMC" },
+        { datum: "B", materialCondition: "" },
+        { datum: "", materialCondition: "" },
+      ],
+    });
+    expect(sanitized.diameterZone).toBe(false);
+    expect(sanitized.materialCondition).toBe("");
+    expect(sanitized.datums.every((d) => d.datum === "" && d.materialCondition === "")).toBe(true);
+  });
+
+  it("duplicates annotations with deep-cloned specs, cleared marker, and auto-incremented IDs", () => {
+    const p1: Dimension = {
+      ...createDimension([], "d-1"),
+      id: "p-1",
+      kind: "point",
+      name: "P1",
+      point: { x: "10", y: "20", z: "0", datums: ["A", "B", ""] },
+      linkedPointIds: ["pt-a"],
+      linkedNoteIds: ["note-1"],
+      marker: { drawingId: "d-1", page: 1, x: 0.5, y: 0.5, width: 0, height: 0 },
+    };
+    const dup = duplicateDimension(p1, [p1]);
+    expect(dup.id).not.toBe(p1.id);
+    expect(dup.name).toBe("P2");
+    expect(dup.marker).toBeNull();
+    expect(dup.point).toEqual(p1.point);
+    expect(dup.point).not.toBe(p1.point);
+    expect(dup.linkedPointIds).toEqual(["pt-a"]);
+    expect(dup.linkedPointIds).not.toBe(p1.linkedPointIds);
+    expect(dup.linkedNoteIds).toEqual(["note-1"]);
+    expect(dup.linkedNoteIds).not.toBe(p1.linkedNoteIds);
+
+    const datumA: Dimension = {
+      ...createDimension([], "d-1"),
+      id: "dat-a",
+      kind: "datum",
+      name: "A",
+    };
+    const dupDatum = duplicateDimension(datumA, [datumA]);
+    expect(dupDatum.name).toBe("B");
   });
 });

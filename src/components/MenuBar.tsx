@@ -2,15 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import {
   FilePlus2,
   FolderOpen,
+  FolderPlus,
   Save,
   SaveAll,
   XCircle,
 } from "lucide-react";
+import { QOneLogo } from "./QOneLogo";
 
 export interface MenuBarProps {
   projectName: string | null;
   isDirty: boolean;
   hasProject: boolean;
+  onNewProject: () => void;
   onOpenPdf: () => void;
   onOpenProject: () => void;
   onSave: () => void;
@@ -22,6 +25,7 @@ export function MenuBar({
   projectName,
   isDirty,
   hasProject,
+  onNewProject,
   onOpenPdf,
   onOpenProject,
   onSave,
@@ -60,11 +64,9 @@ export function MenuBar({
     <header className="relative z-40 flex h-9 shrink-0 select-none items-center justify-between border-b border-neutral-800 bg-neutral-950 px-2.5 text-xs text-neutral-200">
       <div className="flex items-center gap-1" ref={menuRef}>
         <div className="mr-2 flex items-center gap-2 border-r border-neutral-800 pr-3">
-          <div className="flex h-5 w-5 items-center justify-center rounded bg-neutral-800 text-[10px] font-bold text-neutral-100 ring-1 ring-neutral-700">
-            DM
-          </div>
+          <QOneLogo className="h-[18px] w-[18px] text-neutral-100" />
           <span className="font-semibold tracking-tight text-neutral-100">
-            DM-One
+            Q-One
           </span>
         </div>
 
@@ -88,6 +90,18 @@ export function MenuBar({
               role="menu"
               className="absolute left-0 top-full mt-1 w-56 rounded-md border border-neutral-700/90 bg-neutral-900 py-1 shadow-2xl"
             >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => runAction(onNewProject)}
+                className="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs text-neutral-200 hover:bg-neutral-800 hover:text-white"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <FolderPlus className="h-3.5 w-3.5 text-neutral-400" />
+                  New Project
+                </span>
+              </button>
+
               <button
                 type="button"
                 role="menuitem"

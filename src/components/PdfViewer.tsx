@@ -46,10 +46,17 @@ export interface ScrollToPageRequest {
   key: number;
 }
 
+export interface DrawingSwitchOption {
+  id: string;
+  label: string;
+}
+
 export interface PdfViewerProps {
   pdfBytes: Uint8Array | null;
   drawingId: string | null;
   drawingFilename: string | null;
+  drawingOptions?: DrawingSwitchOption[];
+  onSwitchDrawing?: (drawingId: string) => void;
   currentPage: number;
   pageCount: number;
   zoom: number;
@@ -465,6 +472,8 @@ export function PdfViewer({
   pdfBytes,
   drawingId,
   drawingFilename,
+  drawingOptions,
+  onSwitchDrawing,
   currentPage,
   pageCount,
   zoom,
@@ -924,9 +933,24 @@ export function PdfViewer({
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden bg-neutral-900">
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-neutral-800 bg-neutral-950/90 px-3 text-xs text-neutral-300">
-        <span className="truncate font-mono text-[11px] text-neutral-400">
-          {drawingFilename ?? "Drawing"}
-        </span>
+        {drawingOptions && drawingOptions.length > 1 && onSwitchDrawing && drawingId ? (
+          <select
+            aria-label="Active drawing"
+            value={drawingId}
+            onChange={(e) => onSwitchDrawing(e.target.value)}
+            className="max-w-sm truncate rounded border border-neutral-800 bg-neutral-900 px-2 py-1 font-mono text-[11px] text-neutral-200 focus:border-neutral-600 focus:outline-none"
+          >
+            {drawingOptions.map((opt) => (
+              <option key={opt.id} value={opt.id}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="truncate font-mono text-[11px] text-neutral-400">
+            {drawingFilename ?? "Drawing"}
+          </span>
+        )}
 
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 rounded bg-neutral-900 px-1 py-0.5 ring-1 ring-neutral-800">
