@@ -1,5 +1,32 @@
 @import "tailwindcss";
 
+@theme {
+  /* Surface hierarchy */
+  --color-surface-chrome: #0a0a0a;
+  --color-surface-canvas: #171717;
+  --color-surface-raised: #262626;
+  --color-surface-hover: #404040;
+
+  /* Border hierarchy */
+  --color-border-subtle: #262626;
+  --color-border-control: #404040;
+  --color-border-focus: #737373;
+
+  /* Text (ink) hierarchy */
+  --color-ink-primary: #f5f5f5;
+  --color-ink-secondary: #d4d4d4;
+  --color-ink-muted: #a3a3a3;
+  --color-ink-subtle: #737373;
+  --color-ink-disabled: #525252;
+
+  /* Semantic accents */
+  --color-accent-selection: #3b82f6;
+  --color-accent-active: #34d399;
+  --color-accent-warning: #fbbf24;
+  --color-accent-danger: #f43f5e;
+  --color-accent-point: #c084fc;
+}
+
 html,
 body,
 #root {
