@@ -192,7 +192,7 @@ fn validate_archive_path(archive_path: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn write_dmone_atomic(
+pub fn write_qone_atomic(
     path: &Path,
     project: &ProjectData,
     drawings_map: &HashMap<String, Vec<u8>>,
@@ -253,7 +253,7 @@ pub fn write_dmone_atomic(
 
         zip_writer
             .finish()
-            .map_err(|e| format!("Failed to finalize .dmone archive: {}", e))?;
+            .map_err(|e| format!("Failed to finalize .qone archive: {}", e))?;
     }
 
     temp_file
@@ -272,11 +272,11 @@ pub fn write_dmone_atomic(
     Ok(())
 }
 
-pub fn read_dmone(path: &Path) -> Result<(ProjectData, HashMap<String, Vec<u8>>), String> {
+pub fn read_qone(path: &Path) -> Result<(ProjectData, HashMap<String, Vec<u8>>), String> {
     let file = File::open(path)
         .map_err(|e| format!("Failed to open project file '{}': {}", path.display(), e))?;
     let mut archive = ZipArchive::new(file)
-        .map_err(|e| format!("Project file is not a valid .dmone archive: {}", e))?;
+        .map_err(|e| format!("Project file is not a valid .qone archive: {}", e))?;
 
     let project: ProjectData = {
         let mut json_entry = archive
@@ -292,7 +292,7 @@ pub fn read_dmone(path: &Path) -> Result<(ProjectData, HashMap<String, Vec<u8>>)
 
     if project.schema_version != CURRENT_SCHEMA_VERSION {
         return Err(format!(
-            "Unsupported .dmone schema version {} (expected {}).",
+            "Unsupported .qone schema version {} (expected {}).",
             project.schema_version, CURRENT_SCHEMA_VERSION
         ));
     }
@@ -400,7 +400,7 @@ pub fn save_project(
         guard.clone()
     };
 
-    write_dmone_atomic(Path::new(&path), &project, &snapshot)
+    write_qone_atomic(Path::new(&path), &project, &snapshot)
 }
 
 #[tauri::command]
@@ -408,7 +408,7 @@ pub fn open_project(
     path: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<OpenedProjectPayload, String> {
-    let (project, drawings_map) = read_dmone(Path::new(&path))?;
+    let (project, drawings_map) = read_qone(Path::new(&path))?;
     let active_drawing_id = project.drawings.first().map(|d| d.id.clone());
     let pdf_bytes = active_drawing_id
         .as_ref()
@@ -565,11 +565,11 @@ mod tests {
     }
 
     #[test]
-    fn test_dmone_round_trip_supports_zero_and_multiple_drawings_with_parts() {
+    fn test_qone_round_trip_supports_zero_and_multiple_drawings_with_parts() {
         let dir = tempdir().unwrap();
 
         // Zero-drawing project (New Project before attaching PDFs)
-        let empty_path = dir.path().join("empty.dmone");
+        let empty_path = dir.path().join("empty.qone");
         let empty_project = ProjectData {
             schema_version: CURRENT_SCHEMA_VERSION,
             project_id: "proj-empty".to_string(),
@@ -590,16 +590,16 @@ mod tests {
             dimensions: vec![],
         };
         let empty_map = HashMap::new();
-        write_dmone_atomic(&empty_path, &empty_project, &empty_map).unwrap();
-        let (loaded_empty, loaded_empty_map) = read_dmone(&empty_path).unwrap();
+        write_qone_atomic(&empty_path, &empty_project, &empty_map).unwrap();
+        let (loaded_empty, loaded_empty_map) = read_qone(&empty_path).unwrap();
         assert_eq!(loaded_empty, empty_project);
         assert!(loaded_empty_map.is_empty());
 
         // Multi-drawing project with nested parts
-        let multi_path = dir.path().join("assembly.dmone");
+        let multi_path = dir.path().join("assembly.qone");
         let (project, map) = sample_multi_drawing_project();
-        write_dmone_atomic(&multi_path, &project, &map).unwrap();
-        let (loaded_project, loaded_map) = read_dmone(&multi_path).unwrap();
+        write_qone_atomic(&multi_path, &project, &map).unwrap();
+        let (loaded_project, loaded_map) = read_qone(&multi_path).unwrap();
         assert_eq!(loaded_project, project);
         assert_eq!(loaded_map, map);
     }
@@ -607,15 +607,15 @@ mod tests {
     #[test]
     fn test_atomic_save_overwrites_existing_and_leaves_no_temp_files() {
         let dir = tempdir().unwrap();
-        let file_path = dir.path().join("overwrite.dmone");
+        let file_path = dir.path().join("overwrite.qone");
         let (mut project, map) = sample_multi_drawing_project();
 
-        write_dmone_atomic(&file_path, &project, &map).unwrap();
+        write_qone_atomic(&file_path, &project, &map).unwrap();
 
         project.dimensions[0].nominal = "30.00".to_string();
-        write_dmone_atomic(&file_path, &project, &map).unwrap();
+        write_qone_atomic(&file_path, &project, &map).unwrap();
 
-        let (loaded_project, loaded_map) = read_dmone(&file_path).unwrap();
+        let (loaded_project, loaded_map) = read_qone(&file_path).unwrap();
         assert_eq!(loaded_project, project);
         assert_eq!(loaded_map, map);
 
@@ -623,13 +623,13 @@ mod tests {
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
             .collect();
-        assert_eq!(entries, vec!["overwrite.dmone".to_string()]);
+        assert_eq!(entries, vec!["overwrite.qone".to_string()]);
     }
 
     #[test]
-    fn test_read_dmone_backward_compatible_with_milestone1_archive() {
+    fn test_read_qone_backward_compatible_with_milestone1_archive() {
         let dir = tempdir().unwrap();
-        let legacy_path = dir.path().join("legacy_m1.dmone");
+        let legacy_path = dir.path().join("legacy_m1.qone");
         let legacy_json = r#"{
           "schemaVersion": 1,
           "projectId": "legacy-1",
@@ -678,7 +678,7 @@ mod tests {
             z.finish().unwrap();
         }
 
-        let (loaded, map) = read_dmone(&legacy_path).unwrap();
+        let (loaded, map) = read_qone(&legacy_path).unwrap();
         assert!(loaded.parts.is_empty());
         assert_eq!(loaded.drawings.len(), 1);
         assert_eq!(loaded.dimensions[0].drawing_id, None);
@@ -687,16 +687,16 @@ mod tests {
     }
 
     #[test]
-    fn test_read_dmone_rejects_corrupt_zip_missing_entries_bad_version_and_unsafe_path() {
+    fn test_read_qone_rejects_corrupt_zip_missing_entries_bad_version_and_unsafe_path() {
         let dir = tempdir().unwrap();
 
         // (a) Corrupt ZIP
-        let corrupt = dir.path().join("corrupt.dmone");
+        let corrupt = dir.path().join("corrupt.qone");
         fs::write(&corrupt, b"not a zip").unwrap();
-        assert!(read_dmone(&corrupt).is_err());
+        assert!(read_qone(&corrupt).is_err());
 
         // (b) Missing project.json
-        let no_json = dir.path().join("no_json.dmone");
+        let no_json = dir.path().join("no_json.qone");
         {
             let mut z = ZipWriter::new(File::create(&no_json).unwrap());
             z.start_file(
@@ -707,10 +707,10 @@ mod tests {
             z.write_all(&sample_pdf("x")).unwrap();
             z.finish().unwrap();
         }
-        assert!(read_dmone(&no_json).is_err());
+        assert!(read_qone(&no_json).is_err());
 
         // (c) Unsupported schemaVersion
-        let bad_ver = dir.path().join("bad_ver.dmone");
+        let bad_ver = dir.path().join("bad_ver.qone");
         let (mut p_bad_ver, _) = sample_multi_drawing_project();
         p_bad_ver.schema_version = 99;
         {
@@ -721,10 +721,10 @@ mod tests {
                 .unwrap();
             z.finish().unwrap();
         }
-        assert!(read_dmone(&bad_ver).is_err());
+        assert!(read_qone(&bad_ver).is_err());
 
         // (d) Unsafe archivePath traversal
-        let traversal = dir.path().join("traversal.dmone");
+        let traversal = dir.path().join("traversal.qone");
         let (mut p_trav, _) = sample_multi_drawing_project();
         p_trav.drawings[0].archive_path = "../evil.pdf".to_string();
         {
@@ -735,15 +735,15 @@ mod tests {
                 .unwrap();
             z.finish().unwrap();
         }
-        assert!(read_dmone(&traversal).is_err());
+        assert!(read_qone(&traversal).is_err());
     }
 
     #[test]
-    fn test_write_dmone_rejects_missing_cached_drawing_bytes() {
+    fn test_write_qone_rejects_missing_cached_drawing_bytes() {
         let dir = tempdir().unwrap();
-        let out = dir.path().join("missing_bytes.dmone");
+        let out = dir.path().join("missing_bytes.qone");
         let (project, mut map) = sample_multi_drawing_project();
         map.remove("drw-2");
-        assert!(write_dmone_atomic(&out, &project, &map).is_err());
+        assert!(write_qone_atomic(&out, &project, &map).is_err());
     }
 }

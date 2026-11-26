@@ -64,10 +64,10 @@ export function MenuBar({
       <div className="flex items-center gap-1" ref={menuRef}>
         <div className="mr-2 flex items-center gap-2 border-r border-neutral-800 pr-3">
           <div className="flex h-5 w-5 items-center justify-center rounded bg-neutral-800 text-[10px] font-bold text-neutral-100 ring-1 ring-neutral-700">
-            DM
+            Q1
           </div>
           <span className="font-semibold tracking-tight text-neutral-100">
-            DM-One
+            Q-One
           </span>
         </div>
 

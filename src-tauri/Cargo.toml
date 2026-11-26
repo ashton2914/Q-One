@@ -1,12 +1,12 @@
 [package]
-name = "dm-one"
+name = "q-one"
 version = "0.1.0"
-description = "DM-One — Cross-platform Dimension Management Desktop Application"
-authors = ["DM-One"]
+description = "Q-One — Cross-platform Quality Management Desktop Application"
+authors = ["Q-One"]
 edition = "2021"
 
 [lib]
-name = "dm_one_lib"
+name = "q_one_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

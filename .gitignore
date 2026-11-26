@@ -16,4 +16,5 @@ Thumbs.db
 .superpowers/
 
 # Local project test files
+*.qone
 *.dmone

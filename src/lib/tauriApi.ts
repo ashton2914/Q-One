@@ -30,10 +30,10 @@ export async function pickPdfFile(): Promise<string | null> {
 
 export async function pickOpenProjectFile(): Promise<string | null> {
   const selected = await open({
-    title: "Open DM-One Project",
+    title: "Open Q-One Project",
     multiple: false,
     directory: false,
-    filters: [{ name: "DM-One Project", extensions: ["dmone"] }],
+    filters: [{ name: "Q-One Project", extensions: ["qone"] }],
   });
   return typeof selected === "string" ? selected : null;
 }
@@ -42,18 +42,18 @@ export async function pickSaveProjectFile(
   defaultName: string,
 ): Promise<string | null> {
   const safeBase = defaultName.trim() || "project";
-  const defaultPath = safeBase.toLowerCase().endsWith(".dmone")
+  const defaultPath = safeBase.toLowerCase().endsWith(".qone")
     ? safeBase
-    : `${safeBase}.dmone`;
+    : `${safeBase}.qone`;
   const selected = await save({
-    title: "Save DM-One Project",
+    title: "Save Q-One Project",
     defaultPath,
-    filters: [{ name: "DM-One Project", extensions: ["dmone"] }],
+    filters: [{ name: "Q-One Project", extensions: ["qone"] }],
   });
   if (!selected) return null;
-  return selected.toLowerCase().endsWith(".dmone")
+  return selected.toLowerCase().endsWith(".qone")
     ? selected
-    : `${selected}.dmone`;
+    : `${selected}.qone`;
 }
 
 export async function importPdf(path: string): Promise<ImportedPdfPayload> {

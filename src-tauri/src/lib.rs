@@ -14,5 +14,5 @@ pub fn run() {
             project::open_project
         ])
         .run(tauri::generate_context!())
-        .expect("error while running DM-One application");
+        .expect("error while running Q-One application");
 }

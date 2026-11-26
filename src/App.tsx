@@ -358,7 +358,7 @@ export default function App() {
           if (!shouldBlockWindowClose(isDirtyRef.current)) return;
           event.preventDefault();
           const discard = await confirmDialog(
-            "You have unsaved changes. Discard them and close DM-One?",
+            "You have unsaved changes. Discard them and close Q-One?",
             { title: "Unsaved Changes", kind: "warning" },
           );
           if (discard) {
@@ -1196,15 +1196,15 @@ export default function App() {
           <main className="flex flex-1 items-center justify-center bg-neutral-900 p-8">
             <div className="max-w-lg rounded-xl border border-neutral-800 bg-neutral-950/90 p-8 text-center shadow-xl">
               <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-neutral-800 text-lg font-bold text-neutral-100 ring-1 ring-neutral-700">
-                DM
+                Q1
               </div>
               <h1 className="text-lg font-semibold text-neutral-100">
-                DM-One Dimension Manager
+                Q-One Quality Manager
               </h1>
               <p className="mt-2 text-xs leading-relaxed text-neutral-400">
-                Create a new multi-part BOM project, open a PDF engineering
+                Create a new quality management project, open a PDF engineering
                 drawing directly, or resume an existing{" "}
-                <span className="font-mono text-neutral-300">.dmone</span>{" "}
+                <span className="font-mono text-neutral-300">.qone</span>{" "}
                 project.
               </p>
               <div className="mt-6 flex flex-wrap items-center justify-center gap-2.5">
@@ -1230,7 +1230,7 @@ export default function App() {
                   className="inline-flex items-center gap-2 rounded-md bg-neutral-800 px-4 py-2 text-xs font-medium text-neutral-200 hover:bg-neutral-700"
                 >
                   <FolderOpen className="h-4 w-4 text-amber-400" />
-                  Open Project (.dmone)
+                  Open Project (.qone)
                 </button>
               </div>
             </div>
