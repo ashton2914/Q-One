@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import {
   FilePlus2,
   FolderOpen,
@@ -18,6 +17,9 @@ import {
   type ScrollToPageRequest,
 } from "./components/PdfViewer";
 import { ProjectWorkspace } from "./components/ProjectWorkspace";
+import { QOneLogo } from "./components/QOneLogo";
+import { Button, EmptyState } from "./components/ui";
+import { confirmAction } from "./lib/confirm";
 import {
   createDimension,
   createProjectFromPdf,
@@ -59,17 +61,6 @@ import type {
 interface StatusMessage {
   kind: "info" | "error";
   text: string;
-}
-
-async function confirmDestructive(
-  message: string,
-  title: string,
-): Promise<boolean> {
-  try {
-    return await confirmDialog(message, { title, kind: "warning" });
-  } catch {
-    return window.confirm(message);
-  }
 }
 
 export default function App() {
@@ -192,15 +183,16 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [status]);
 
-  const confirmDiscardIfDirty = useCallback((): boolean => {
+  const confirmDiscardIfDirty = useCallback(async (): Promise<boolean> => {
     if (!isDirty) return true;
-    return window.confirm(
+    return confirmAction(
       "You have unsaved changes. Discard them and continue?",
+      { title: "Unsaved Changes", kind: "warning" },
     );
   }, [isDirty]);
 
   const handleNewProject = useCallback(async () => {
-    if (!confirmDiscardIfDirty()) return;
+    if (!(await confirmDiscardIfDirty())) return;
     try {
       await clearDrawings();
     } catch {
@@ -225,7 +217,7 @@ export default function App() {
   }, [confirmDiscardIfDirty, showStatus]);
 
   const handleOpenPdf = useCallback(async () => {
-    if (!confirmDiscardIfDirty()) return;
+    if (!(await confirmDiscardIfDirty())) return;
     try {
       const path = await pickPdfFile();
       if (!path) return;
@@ -268,7 +260,7 @@ export default function App() {
   }, [project, confirmDiscardIfDirty, showStatus]);
 
   const handleOpenProject = useCallback(async () => {
-    if (!confirmDiscardIfDirty()) return;
+    if (!(await confirmDiscardIfDirty())) return;
     try {
       const path = await pickOpenProjectFile();
       if (!path) return;
@@ -357,7 +349,7 @@ export default function App() {
         .onCloseRequested(async (event) => {
           if (!shouldBlockWindowClose(isDirtyRef.current)) return;
           event.preventDefault();
-          const discard = await confirmDialog(
+          const discard = await confirmAction(
             "You have unsaved changes. Discard them and close Q-One?",
             { title: "Unsaved Changes", kind: "warning" },
           );
@@ -387,7 +379,7 @@ export default function App() {
 
   const handleCloseProject = useCallback(async () => {
     if (!project) return;
-    if (!confirmDiscardIfDirty()) return;
+    if (!(await confirmDiscardIfDirty())) return;
     try {
       await clearDrawings();
     } catch {
@@ -482,7 +474,10 @@ export default function App() {
       const message = hasNestedImpact
         ? `Delete "${partLabel}" along with ${preview.removedPartIds.length - 1} sub-part(s), ${preview.removedDrawingIds.length} drawing(s), and ${affectedDims} dimension(s)?`
         : `Delete part "${partLabel}"?`;
-      const ok = await confirmDestructive(message, "Delete Part");
+      const ok = await confirmAction(message, {
+        title: "Delete Part",
+        kind: "warning",
+      });
       if (!ok) return;
 
       for (const drwId of preview.removedDrawingIds) {
@@ -616,7 +611,10 @@ export default function App() {
         dimCount > 0
           ? `Delete ${drwLabel} and its ${dimCount} dimension(s)?`
           : `Delete ${drwLabel}?`;
-      const ok = await confirmDestructive(message, "Delete Drawing");
+      const ok = await confirmAction(message, {
+        title: "Delete Drawing",
+        kind: "warning",
+      });
       if (!ok) return;
       const ownerPart = project.parts.find((p) => p.id === partId);
       const fallbackDrawingId =
@@ -1040,10 +1038,10 @@ export default function App() {
       const label = dim?.name.trim()
         ? `dimension "${dim.name.trim()}"`
         : "this dimension";
-      const ok = await confirmDestructive(
-        `Delete ${label}?`,
-        "Delete Dimension",
-      );
+      const ok = await confirmAction(`Delete ${label}?`, {
+        title: "Delete Dimension",
+        kind: "warning",
+      });
       if (!ok) return;
 
       setProject((prev) => {
@@ -1193,47 +1191,48 @@ export default function App() {
         />
 
         {!project ? (
-          <main className="flex flex-1 items-center justify-center bg-neutral-900 p-8">
-            <div className="max-w-lg rounded-xl border border-neutral-800 bg-neutral-950/90 p-8 text-center shadow-xl">
-              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-neutral-800 text-lg font-bold text-neutral-100 ring-1 ring-neutral-700">
-                Q1
-              </div>
-              <h1 className="text-lg font-semibold text-neutral-100">
-                Q-One Quality Manager
-              </h1>
-              <p className="mt-2 text-xs leading-relaxed text-neutral-400">
-                Create a new quality management project, open a PDF engineering
-                drawing directly, or resume an existing{" "}
-                <span className="font-mono text-neutral-300">.qone</span>{" "}
-                project.
-              </p>
-              <div className="mt-6 flex flex-wrap items-center justify-center gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => void handleNewProject()}
-                  className="inline-flex items-center gap-2 rounded-md bg-neutral-100 px-4 py-2 text-xs font-medium text-neutral-950 hover:bg-white"
-                >
-                  <FolderPlus className="h-4 w-4" />
-                  New Project
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleOpenPdf()}
-                  className="inline-flex items-center gap-2 rounded-md bg-neutral-800 px-4 py-2 text-xs font-medium text-neutral-200 hover:bg-neutral-700"
-                >
-                  <FilePlus2 className="h-4 w-4" />
-                  Open PDF Drawing
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleOpenProject()}
-                  className="inline-flex items-center gap-2 rounded-md bg-neutral-800 px-4 py-2 text-xs font-medium text-neutral-200 hover:bg-neutral-700"
-                >
-                  <FolderOpen className="h-4 w-4 text-amber-400" />
-                  Open Project (.qone)
-                </button>
-              </div>
-            </div>
+          <main className="flex flex-1 items-center justify-center bg-surface-canvas p-8">
+            <EmptyState
+              size="lg"
+              icon={<QOneLogo className="h-7 w-7 text-ink-primary" />}
+              title="Q-One Quality Manager"
+              description={
+                <>
+                  Create a new quality management project, open a PDF
+                  engineering drawing directly, or resume an existing{" "}
+                  <span className="font-mono text-ink-secondary">.qone</span>{" "}
+                  project.
+                </>
+              }
+              actions={
+                <>
+                  <Button
+                    variant="primary"
+                    size="md"
+                    onClick={() => void handleNewProject()}
+                  >
+                    <FolderPlus className="h-4 w-4" />
+                    New Project
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    onClick={() => void handleOpenPdf()}
+                  >
+                    <FilePlus2 className="h-4 w-4" />
+                    Open PDF Drawing
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    onClick={() => void handleOpenProject()}
+                  >
+                    <FolderOpen className="h-4 w-4 text-accent-warning" />
+                    Open Project (.qone)
+                  </Button>
+                </>
+              }
+            />
           </main>
         ) : activeModule === "project" ? (
           <ProjectWorkspace
@@ -1333,21 +1332,18 @@ export default function App() {
                 onCancelPlacing={() => setPlacingDimensionId(null)}
               />
             ) : (
-              <main className="flex flex-1 items-center justify-center bg-neutral-900 p-8">
-                <div className="max-w-sm rounded-xl border border-neutral-800 bg-neutral-950/90 p-6 text-center shadow-xl">
-                  <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-neutral-800 text-neutral-300">
-                    <Network className="h-5 w-5" />
-                  </div>
-                  <h2 className="text-sm font-semibold text-neutral-100">
-                    {activePart
-                      ? `No Drawing Attached`
-                      : `No Drawing Active`}
-                  </h2>
-                  <p className="mt-1.5 text-xs leading-relaxed text-neutral-400">
-                    {activePart ? (
+              <main className="flex flex-1 items-center justify-center bg-surface-canvas p-8">
+                <EmptyState
+                  size="sm"
+                  icon={<Network className="h-5 w-5" />}
+                  title={
+                    activePart ? "No Drawing Attached" : "No Drawing Active"
+                  }
+                  description={
+                    activePart ? (
                       <>
                         Active part{" "}
-                        <span className="font-medium text-neutral-200">
+                        <span className="font-medium text-ink-primary">
                           {activePart.name.trim() || "Untitled Part"}
                         </span>{" "}
                         has no PDF drawing attached yet.
@@ -1355,38 +1351,38 @@ export default function App() {
                     ) : (
                       <>
                         Activate a part in the{" "}
-                        <span className="font-medium text-neutral-200">
+                        <span className="font-medium text-ink-primary">
                           Project
                         </span>{" "}
                         module to display its PDF drawing here.
                       </>
-                    )}
-                  </p>
-                  <div className="mt-4 flex items-center justify-center gap-2">
-                    {activePart && (
-                      <button
-                        type="button"
-                        onClick={() => void handleAttachPdf(activePart.id)}
-                        className="inline-flex items-center gap-1.5 rounded-md bg-neutral-100 px-3.5 py-2 text-xs font-medium text-neutral-950 hover:bg-white"
+                    )
+                  }
+                  actions={
+                    <>
+                      {activePart && (
+                        <Button
+                          variant="primary"
+                          size="md"
+                          onClick={() => void handleAttachPdf(activePart.id)}
+                          className="px-3.5"
+                        >
+                          <FilePlus2 className="h-3.5 w-3.5" />
+                          Attach PDF
+                        </Button>
+                      )}
+                      <Button
+                        variant={activePart ? "secondary" : "primary"}
+                        size="md"
+                        onClick={() => setActiveModule("project")}
+                        className="px-3.5"
                       >
-                        <FilePlus2 className="h-3.5 w-3.5" />
-                        Attach PDF
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setActiveModule("project")}
-                      className={`inline-flex items-center gap-1.5 rounded-md px-3.5 py-2 text-xs font-medium ${
-                        activePart
-                          ? "bg-neutral-800 text-neutral-200 hover:bg-neutral-700"
-                          : "bg-neutral-100 text-neutral-950 hover:bg-white"
-                      }`}
-                    >
-                      <Network className="h-3.5 w-3.5" />
-                      Go to Project
-                    </button>
-                  </div>
-                </div>
+                        <Network className="h-3.5 w-3.5" />
+                        Go to Project
+                      </Button>
+                    </>
+                  }
+                />
               </main>
             )}
           </div>
