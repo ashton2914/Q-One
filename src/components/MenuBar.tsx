@@ -7,6 +7,7 @@ import {
   SaveAll,
   XCircle,
 } from "lucide-react";
+import { QOneLogo } from "./QOneLogo";
 
 export interface MenuBarProps {
   projectName: string | null;
@@ -63,9 +64,7 @@ export function MenuBar({
     <header className="relative z-40 flex h-9 shrink-0 select-none items-center justify-between border-b border-neutral-800 bg-neutral-950 px-2.5 text-xs text-neutral-200">
       <div className="flex items-center gap-1" ref={menuRef}>
         <div className="mr-2 flex items-center gap-2 border-r border-neutral-800 pr-3">
-          <div className="flex h-5 w-5 items-center justify-center rounded bg-neutral-800 text-[10px] font-bold text-neutral-100 ring-1 ring-neutral-700">
-            Q1
-          </div>
+          <QOneLogo className="h-[18px] w-[18px] text-neutral-100" />
           <span className="font-semibold tracking-tight text-neutral-100">
             Q-One
           </span>
