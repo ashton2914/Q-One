@@ -516,17 +516,47 @@ export function replaceDrawingDimensionsOrder(
   allDimensions: readonly Dimension[],
   activeDrawingId: string,
   orderedActiveDimensions: readonly Dimension[],
+  activeAnnotationRevisionId?: string | null,
 ): Dimension[] {
-  const belongsToActive = (d: Dimension) =>
-    (d.drawingId ?? d.marker?.drawingId ?? null) === activeDrawingId;
+  const belongsToActive = (d: Dimension) => {
+    if ((d.drawingId ?? d.marker?.drawingId ?? null) !== activeDrawingId) {
+      return false;
+    }
+    if (
+      activeAnnotationRevisionId !== undefined &&
+      activeAnnotationRevisionId !== null
+    ) {
+      return (d.annotationRevisionId ?? null) === activeAnnotationRevisionId;
+    }
+    return true;
+  };
 
-  let activeIdx = 0;
-  return allDimensions.map((dim) => {
-    if (!belongsToActive(dim)) return dim;
-    const replacement = orderedActiveDimensions[activeIdx];
-    activeIdx += 1;
-    return replacement ?? dim;
-  });
+  let activeCount = 0;
+  for (const dim of allDimensions) {
+    if (belongsToActive(dim)) activeCount += 1;
+  }
+
+  if (activeCount === orderedActiveDimensions.length) {
+    let activeIdx = 0;
+    return allDimensions.map((dim) => {
+      if (!belongsToActive(dim)) return dim;
+      const replacement = orderedActiveDimensions[activeIdx];
+      activeIdx += 1;
+      return replacement ?? dim;
+    });
+  }
+
+  const firstActiveIdx = allDimensions.findIndex(belongsToActive);
+  const others = allDimensions.filter((d) => !belongsToActive(d));
+  if (firstActiveIdx === -1) {
+    return [...others, ...orderedActiveDimensions];
+  }
+  let insertPos = 0;
+  for (let i = 0; i < firstActiveIdx; i += 1) {
+    if (!belongsToActive(allDimensions[i])) insertPos += 1;
+  }
+  others.splice(insertPos, 0, ...orderedActiveDimensions);
+  return others;
 }
 
 /**
@@ -538,10 +568,21 @@ export function insertDimensionsAtSlot(
   activeDrawingId: string,
   newDimensions: readonly Dimension[],
   activeSlot: number,
+  activeAnnotationRevisionId?: string | null,
 ): Dimension[] {
   if (newDimensions.length === 0) return [...allDimensions];
-  const belongsToActive = (d: Dimension) =>
-    (d.drawingId ?? d.marker?.drawingId ?? null) === activeDrawingId;
+  const belongsToActive = (d: Dimension) => {
+    if ((d.drawingId ?? d.marker?.drawingId ?? null) !== activeDrawingId) {
+      return false;
+    }
+    if (
+      activeAnnotationRevisionId !== undefined &&
+      activeAnnotationRevisionId !== null
+    ) {
+      return (d.annotationRevisionId ?? null) === activeAnnotationRevisionId;
+    }
+    return true;
+  };
 
   const activeIndices: number[] = [];
   for (let i = 0; i < allDimensions.length; i += 1) {
@@ -553,7 +594,7 @@ export function insertDimensionsAtSlot(
   const clampedSlot = Math.max(0, Math.min(activeIndices.length, activeSlot));
   const next = [...allDimensions];
   if (activeIndices.length === 0 || clampedSlot === 0) {
-    const insertIdx = activeIndices.length > 0 ? activeIndices[0] : 0;
+    const insertIdx = activeIndices.length > 0 ? activeIndices[0] : next.length;
     next.splice(insertIdx, 0, ...newDimensions);
     return next;
   }
@@ -572,12 +613,14 @@ export function insertDimensionAtSlot(
   activeDrawingId: string,
   newDimension: Dimension,
   activeSlot: number,
+  activeAnnotationRevisionId?: string | null,
 ): Dimension[] {
   return insertDimensionsAtSlot(
     allDimensions,
     activeDrawingId,
     [newDimension],
     activeSlot,
+    activeAnnotationRevisionId,
   );
 }
 

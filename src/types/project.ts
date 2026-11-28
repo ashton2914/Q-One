@@ -60,6 +60,8 @@ export interface MarkerPosition {
 export interface Dimension {
   id: string;
   drawingId: string | null;
+  /** Annotation revision (copy) within the drawing; defaults to the drawing's Latest revision. */
+  annotationRevisionId?: string | null;
   /** Target/owning page for this annotation (persists across unmarked/redraw states) */
   page?: number | null;
   kind?: AnnotationKind;
@@ -90,12 +92,20 @@ export interface Part {
   latestDrawingId?: string | null;
 }
 
+export interface AnnotationRevision {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
 export interface DrawingEntry {
   id: string;
   version?: string;
   filename: string;
   archivePath: string;
   pageCount: number;
+  annotationRevisions?: AnnotationRevision[];
+  latestAnnotationRevisionId?: string | null;
 }
 
 export interface PointGroupCalibration {
@@ -116,6 +126,8 @@ export interface PointGroupCalibration {
 export interface PointGroup {
   id: string;
   drawingId: string;
+  /** Annotation revision (copy) within the drawing; defaults to the drawing's Latest revision. */
+  annotationRevisionId?: string | null;
   page: number;
   name: string;
   pointIds: string[];

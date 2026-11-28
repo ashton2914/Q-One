@@ -52,6 +52,15 @@ import {
   suggestNextPointIdForGroup,
 } from "./lib/pointGroups";
 import {
+  createAnnotationRevision,
+  duplicateAnnotationRevisionData,
+  hasAnnotationRevisionNameCollision,
+  makeDefaultAnnotationRevisionId,
+  nextAnnotationRevisionName,
+  resolveLatestAnnotationRevisionId,
+  resolveUniqueAnnotationRevisionName,
+} from "./lib/annotationRevisions";
+import {
   createDefaultGdtSpec,
   createDefaultPointSpec,
   getAnnotationKind,
@@ -115,6 +124,14 @@ export default function App() {
   >("drawings");
 
   const [activeDrawingId, setActiveDrawingId] = useState<string | null>(null);
+  const [activeAnnotationRevisionId, setActiveAnnotationRevisionId] = useState<
+    string | null
+  >(null);
+  const [copiedReview, setCopiedReview] = useState<{
+    drawingId: string;
+    revisionId: string;
+    reviewName: string;
+  } | null>(null);
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [zoom, setZoom] = useState<number>(1);
@@ -222,16 +239,26 @@ export default function App() {
     [activePart],
   );
 
-  const dimCountByDrawing = useMemo(() => {
-    const map = new Map<string, number>();
-    if (!project) return map;
+  const dimCountByRevision = useMemo(() => {
+    const byRevision = new Map<string, number>();
+    if (!project) return byRevision;
+
+    const latestByDrawing = new Map<string, string | null>();
+    for (const drw of project.drawings) {
+      latestByDrawing.set(drw.id, resolveLatestAnnotationRevisionId(drw));
+    }
+
     for (const dim of project.dimensions) {
-      const id = dim.drawingId ?? dim.marker?.drawingId ?? null;
-      if (id) {
-        map.set(id, (map.get(id) ?? 0) + 1);
+      const drwId = dim.drawingId ?? dim.marker?.drawingId ?? null;
+      if (!drwId) continue;
+      const latestRevId = latestByDrawing.get(drwId) ?? null;
+      const revId = dim.annotationRevisionId ?? latestRevId;
+      if (revId) {
+        const key = `${drwId}::${revId}`;
+        byRevision.set(key, (byRevision.get(key) ?? 0) + 1);
       }
     }
-    return map;
+    return byRevision;
   }, [project]);
 
   const activeDrawing = useMemo(
@@ -240,19 +267,52 @@ export default function App() {
   );
   const pageCount = activeDrawing?.pageCount ?? 1;
 
+  const resolvedActiveRevisionId = useMemo(() => {
+    if (!activeDrawing) return null;
+    const revisions = activeDrawing.annotationRevisions ?? [];
+    if (
+      activeAnnotationRevisionId &&
+      revisions.some((r) => r.id === activeAnnotationRevisionId)
+    ) {
+      return activeAnnotationRevisionId;
+    }
+    return resolveLatestAnnotationRevisionId(activeDrawing);
+  }, [activeDrawing, activeAnnotationRevisionId]);
+
+  const activeAnnotationRevision = useMemo(() => {
+    if (!activeDrawing || !resolvedActiveRevisionId) return null;
+    return (
+      (activeDrawing.annotationRevisions ?? []).find(
+        (r) => r.id === resolvedActiveRevisionId,
+      ) ?? null
+    );
+  }, [activeDrawing, resolvedActiveRevisionId]);
+
   const activeDrawingDimensions = useMemo(() => {
     if (!project || !activeDrawingId) return [];
-    return project.dimensions.filter(
-      (d) => (d.drawingId ?? d.marker?.drawingId ?? null) === activeDrawingId,
-    );
-  }, [project, activeDrawingId]);
+    return project.dimensions.filter((d) => {
+      if ((d.drawingId ?? d.marker?.drawingId ?? null) !== activeDrawingId) {
+        return false;
+      }
+      if (!resolvedActiveRevisionId) return true;
+      return (
+        (d.annotationRevisionId ?? resolvedActiveRevisionId) ===
+        resolvedActiveRevisionId
+      );
+    });
+  }, [project, activeDrawingId, resolvedActiveRevisionId]);
 
   const activeDrawingPointGroups = useMemo(() => {
     if (!project || !activeDrawingId) return [];
-    return (project.pointGroups ?? []).filter(
-      (g) => g.drawingId === activeDrawingId,
-    );
-  }, [project, activeDrawingId]);
+    return (project.pointGroups ?? []).filter((g) => {
+      if (g.drawingId !== activeDrawingId) return false;
+      if (!resolvedActiveRevisionId) return true;
+      return (
+        (g.annotationRevisionId ?? resolvedActiveRevisionId) ===
+        resolvedActiveRevisionId
+      );
+    });
+  }, [project, activeDrawingId, resolvedActiveRevisionId]);
 
   // Keep selectedDimensionIds pruned to existing items on the active drawing
   useEffect(() => {
@@ -636,12 +696,19 @@ export default function App() {
         const path = await pickPdfFile();
         if (!path) return;
         const imported = await importPdf(path);
+        const defaultRevId = makeDefaultAnnotationRevisionId(
+          imported.drawingId,
+        );
         const newDrawing = {
           id: imported.drawingId,
           version: "",
           filename: imported.filename,
           archivePath: `drawings/${imported.drawingId}.pdf`,
           pageCount: 1,
+          annotationRevisions: [
+            createAnnotationRevision("Review 1", defaultRevId),
+          ],
+          latestAnnotationRevisionId: defaultRevId,
         };
         setProject((prev) => {
           if (!prev) return prev;
@@ -658,6 +725,7 @@ export default function App() {
         if (activePartId === partId) {
           drawingLoadSeqRef.current += 1;
           setActiveDrawingId(imported.drawingId);
+          setActiveAnnotationRevisionId(defaultRevId);
           setPdfBytes(imported.pdfBytes);
           setCurrentPage(1);
           setSelectedDimensionId(null);
@@ -705,6 +773,327 @@ export default function App() {
       markDirty();
     },
     [markDirty],
+  );
+
+  const handleReorderDrawings = useCallback(
+    (partId: string, orderedDrawingIds: string[]) => {
+      setProject((prev) =>
+        prev
+          ? {
+              ...prev,
+              parts: prev.parts.map((p) =>
+                p.id === partId ? { ...p, drawingIds: orderedDrawingIds } : p,
+              ),
+            }
+          : prev,
+      );
+      markDirty();
+    },
+    [markDirty],
+  );
+
+  const handleDuplicateAnnotationRevision = useCallback(
+    (drawingId: string, sourceRevisionId: string) => {
+      if (!project) return;
+      const drawing = project.drawings.find((d) => d.id === drawingId);
+      if (!drawing) return;
+      const revisions = drawing.annotationRevisions ?? [];
+      const sourceRev = revisions.find((r) => r.id === sourceRevisionId);
+      const newRev = createAnnotationRevision(
+        nextAnnotationRevisionName(revisions),
+      );
+      const { clonedDimensions, clonedPointGroups } =
+        duplicateAnnotationRevisionData({
+          drawingId,
+          sourceRevisionId,
+          targetRevisionId: newRev.id,
+          dimensions: project.dimensions,
+          pointGroups: project.pointGroups ?? [],
+        });
+
+      setProject((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          drawings: prev.drawings.map((d) =>
+            d.id === drawingId
+              ? {
+                  ...d,
+                  annotationRevisions: [...(d.annotationRevisions ?? []), newRev],
+                }
+              : d,
+          ),
+          dimensions: [...prev.dimensions, ...clonedDimensions],
+          pointGroups: [...(prev.pointGroups ?? []), ...clonedPointGroups],
+        };
+      });
+      markDirty();
+      showStatus(
+        "info",
+        `Duplicated "${sourceRev?.name ?? "Review"}" → "${newRev.name}" (${clonedDimensions.length} annotations)`,
+      );
+    },
+    [project, markDirty, showStatus],
+  );
+
+  const handleCopyAnnotationRevision = useCallback(
+    (drawingId: string, revisionId: string) => {
+      if (!project) return;
+      const drawing = project.drawings.find((d) => d.id === drawingId);
+      const rev = drawing?.annotationRevisions?.find(
+        (r) => r.id === revisionId,
+      );
+      if (!drawing || !rev) return;
+      setCopiedReview({
+        drawingId,
+        revisionId,
+        reviewName: rev.name,
+      });
+      showStatus(
+        "info",
+        `Copied "${rev.name}" — right-click any drawing version to paste`,
+      );
+    },
+    [project, showStatus],
+  );
+
+  const handlePasteAnnotationRevision = useCallback(
+    (targetDrawingId: string) => {
+      if (!project || !copiedReview) return;
+      const sourceDrawing = project.drawings.find(
+        (d) => d.id === copiedReview.drawingId,
+      );
+      const sourceRev = sourceDrawing?.annotationRevisions?.find(
+        (r) => r.id === copiedReview.revisionId,
+      );
+      const targetDrawing = project.drawings.find(
+        (d) => d.id === targetDrawingId,
+      );
+      if (!sourceDrawing || !sourceRev || !targetDrawing) {
+        setCopiedReview(null);
+        showStatus("error", "Copied review is no longer available");
+        return;
+      }
+
+      const targetRevisions = targetDrawing.annotationRevisions ?? [];
+      const uniqueName = resolveUniqueAnnotationRevisionName(
+        targetRevisions,
+        sourceRev.name,
+      );
+      const newRev = createAnnotationRevision(uniqueName);
+      const { clonedDimensions, clonedPointGroups } =
+        duplicateAnnotationRevisionData({
+          drawingId: copiedReview.drawingId,
+          targetDrawingId,
+          targetDrawingPageCount: targetDrawing.pageCount,
+          sourceRevisionId: copiedReview.revisionId,
+          targetRevisionId: newRev.id,
+          dimensions: project.dimensions,
+          pointGroups: project.pointGroups ?? [],
+        });
+
+      setProject((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          drawings: prev.drawings.map((d) =>
+            d.id === targetDrawingId
+              ? {
+                  ...d,
+                  annotationRevisions: [...(d.annotationRevisions ?? []), newRev],
+                }
+              : d,
+          ),
+          dimensions: [...prev.dimensions, ...clonedDimensions],
+          pointGroups: [...(prev.pointGroups ?? []), ...clonedPointGroups],
+        };
+      });
+      markDirty();
+      const targetLabel = targetDrawing.version?.trim()
+        ? `Version ${targetDrawing.version.trim()}`
+        : targetDrawing.filename;
+      showStatus(
+        "info",
+        `Pasted "${newRev.name}" into ${targetLabel} (${clonedDimensions.length} annotations)`,
+      );
+    },
+    [project, copiedReview, markDirty, showStatus],
+  );
+
+  const handleCreateBlankAnnotationRevision = useCallback(
+    (drawingId: string) => {
+      if (!project) return;
+      const drawing = project.drawings.find((d) => d.id === drawingId);
+      if (!drawing) return;
+      const revisions = drawing.annotationRevisions ?? [];
+      const newRev = createAnnotationRevision(
+        nextAnnotationRevisionName(revisions),
+      );
+      setProject((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          drawings: prev.drawings.map((d) =>
+            d.id === drawingId
+              ? {
+                  ...d,
+                  annotationRevisions: [...(d.annotationRevisions ?? []), newRev],
+                }
+              : d,
+          ),
+        };
+      });
+      markDirty();
+      showStatus("info", `Created review "${newRev.name}"`);
+    },
+    [project, markDirty, showStatus],
+  );
+
+  const handleRenameAnnotationRevision = useCallback(
+    (drawingId: string, revisionId: string, name: string) => {
+      if (!project) return;
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const drawing = project.drawings.find((d) => d.id === drawingId);
+      if (!drawing) return;
+      const revisions = drawing.annotationRevisions ?? [];
+      if (hasAnnotationRevisionNameCollision(revisions, trimmed, revisionId)) {
+        showStatus(
+          "error",
+          `Review name "${trimmed}" already exists on this drawing`,
+        );
+        return;
+      }
+      const current = revisions.find((r) => r.id === revisionId);
+      if (current && current.name === trimmed) return;
+      setProject((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          drawings: prev.drawings.map((d) =>
+            d.id === drawingId
+              ? {
+                  ...d,
+                  annotationRevisions: (d.annotationRevisions ?? []).map((r) =>
+                    r.id === revisionId ? { ...r, name: trimmed } : r,
+                  ),
+                }
+              : d,
+          ),
+        };
+      });
+      markDirty();
+    },
+    [project, markDirty, showStatus],
+  );
+
+  const handleMarkLatestAnnotationRevision = useCallback(
+    (drawingId: string, revisionId: string) => {
+      if (!project) return;
+      const drawing = project.drawings.find((d) => d.id === drawingId);
+      const targetRev = drawing?.annotationRevisions?.find(
+        (r) => r.id === revisionId,
+      );
+      setProject((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          drawings: prev.drawings.map((d) =>
+            d.id === drawingId
+              ? { ...d, latestAnnotationRevisionId: revisionId }
+              : d,
+          ),
+        };
+      });
+      markDirty();
+      if (targetRev) {
+        showStatus("info", `Marked "${targetRev.name}" as Selected`);
+      }
+    },
+    [project, markDirty, showStatus],
+  );
+
+  const handleDeleteAnnotationRevision = useCallback(
+    async (drawingId: string, revisionId: string) => {
+      if (!project) return;
+      const drawing = project.drawings.find((d) => d.id === drawingId);
+      if (!drawing) return;
+      const revisions = drawing.annotationRevisions ?? [];
+      if (revisions.length <= 1) {
+        showStatus("info", "Cannot delete the only review on a drawing");
+        return;
+      }
+      const targetRev = revisions.find((r) => r.id === revisionId);
+      if (!targetRev) return;
+
+      const count = project.dimensions.filter(
+        (d) =>
+          (d.drawingId ?? d.marker?.drawingId ?? null) === drawingId &&
+          d.annotationRevisionId === revisionId,
+      ).length;
+
+      const confirmed = await confirmAction(
+        `Delete review "${targetRev.name}"${count > 0 ? ` and its ${count} annotation(s)` : ""}?`,
+        { title: "Delete Review", kind: "warning" },
+      );
+      if (!confirmed) return;
+
+      const remainingRevs = revisions.filter((r) => r.id !== revisionId);
+      const nextLatestId =
+        drawing.latestAnnotationRevisionId === revisionId
+          ? remainingRevs[remainingRevs.length - 1]?.id ?? null
+          : drawing.latestAnnotationRevisionId ?? null;
+
+      setProject((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          drawings: prev.drawings.map((d) =>
+            d.id === drawingId
+              ? {
+                  ...d,
+                  annotationRevisions: remainingRevs,
+                  latestAnnotationRevisionId: nextLatestId,
+                }
+              : d,
+          ),
+          dimensions: prev.dimensions.filter(
+            (d) =>
+              !(
+                (d.drawingId ?? d.marker?.drawingId ?? null) === drawingId &&
+                d.annotationRevisionId === revisionId
+              ),
+          ),
+          pointGroups: (prev.pointGroups ?? []).filter(
+            (g) =>
+              !(
+                g.drawingId === drawingId &&
+                g.annotationRevisionId === revisionId
+              ),
+          ),
+        };
+      });
+
+      if (
+        activeDrawingId === drawingId &&
+        resolvedActiveRevisionId === revisionId
+      ) {
+        setActiveAnnotationRevisionId(nextLatestId);
+        setSelectedDimensionId(null);
+        setPlacingDimensionId(null);
+        setEditingDimensionId(null);
+      }
+
+      markDirty();
+      showStatus("info", `Deleted review "${targetRev.name}"`);
+    },
+    [
+      project,
+      activeDrawingId,
+      resolvedActiveRevisionId,
+      markDirty,
+      showStatus,
+    ],
   );
 
   const handleDetachPdf = useCallback(
@@ -884,7 +1273,7 @@ export default function App() {
   );
 
   const handleOpenDrawing = useCallback(
-    async (drawingId: string) => {
+    async (drawingId: string, revisionId?: string | null) => {
       if (!project) return;
       if (editingDimensionId) {
         handleCancelEditing();
@@ -896,17 +1285,25 @@ export default function App() {
         setActivePartId(ownerPart.id);
         setSelectedPartId(ownerPart.id);
       }
+      const targetDrawing = project.drawings.find((d) => d.id === drawingId);
+      const nextRevId =
+        revisionId ?? resolveLatestAnnotationRevisionId(targetDrawing);
       try {
         if (drawingId !== activeDrawingId || !pdfBytes) {
           const seq = ++drawingLoadSeqRef.current;
           const bytes = await getDrawingBytes(drawingId);
           if (drawingLoadSeqRef.current !== seq) return;
           setActiveDrawingId(drawingId);
+          setActiveAnnotationRevisionId(nextRevId);
           setPdfBytes(bytes);
           setCurrentPage(1);
           setSelectedDimensionId(null);
           setPlacingDimensionId(null);
           setFitRequestKey((k) => k + 1);
+        } else if (nextRevId !== resolvedActiveRevisionId) {
+          setActiveAnnotationRevisionId(nextRevId);
+          setSelectedDimensionId(null);
+          setPlacingDimensionId(null);
         }
         setDrawingSidebarView("dimensions");
         setActiveModule("drawing");
@@ -919,6 +1316,7 @@ export default function App() {
       editingDimensionId,
       handleCancelEditing,
       activeDrawingId,
+      resolvedActiveRevisionId,
       pdfBytes,
       showStatus,
     ],
@@ -958,7 +1356,11 @@ export default function App() {
     setProject((prev) => {
       if (!prev) return prev;
       const active = prev.dimensions.filter(
-        (d) => (d.drawingId ?? d.marker?.drawingId ?? null) === activeDrawingId,
+        (d) =>
+          (d.drawingId ?? d.marker?.drawingId ?? null) === activeDrawingId &&
+          (!resolvedActiveRevisionId ||
+            (d.annotationRevisionId ?? resolvedActiveRevisionId) ===
+              resolvedActiveRevisionId),
       );
       if (active.length < 2) return prev;
       const sorted = sortDrawingAnnotations(active);
@@ -968,12 +1370,13 @@ export default function App() {
           prev.dimensions,
           activeDrawingId,
           sorted,
+          resolvedActiveRevisionId,
         ),
       };
     });
     markDirty();
     showStatus("info", "Sorted annotations");
-  }, [activeDrawingId, markDirty, showStatus]);
+  }, [activeDrawingId, resolvedActiveRevisionId, markDirty, showStatus]);
 
   const handleReorderDimensions = useCallback(
     (sourceId: string, targetSectionSlot: number) => {
@@ -982,7 +1385,11 @@ export default function App() {
       setProject((prev) => {
         if (!prev) return prev;
         const active = prev.dimensions.filter(
-          (d) => (d.drawingId ?? d.marker?.drawingId ?? null) === activeDrawingId,
+          (d) =>
+            (d.drawingId ?? d.marker?.drawingId ?? null) === activeDrawingId &&
+            (!resolvedActiveRevisionId ||
+              (d.annotationRevisionId ?? resolvedActiveRevisionId) ===
+                resolvedActiveRevisionId),
         );
         const reordered = reorderWithinSection(
           active,
@@ -1000,6 +1407,7 @@ export default function App() {
             prev.dimensions,
             activeDrawingId,
             reordered,
+            resolvedActiveRevisionId,
           ),
         };
       });
@@ -1007,7 +1415,7 @@ export default function App() {
         markDirty();
       }
     },
-    [activeDrawingId, markDirty],
+    [activeDrawingId, resolvedActiveRevisionId, markDirty],
   );
 
   const handleAddDimension = useCallback(
@@ -1052,11 +1460,10 @@ export default function App() {
         owningPage = currentPage;
       }
 
-      const nextDim = createDimension(
-        activeDrawingDimensions,
-        activeDrawingId,
-        owningPage,
-      );
+      const nextDim = {
+        ...createDimension(activeDrawingDimensions, activeDrawingId, owningPage),
+        annotationRevisionId: resolvedActiveRevisionId,
+      };
       editingOriginRef.current = { id: nextDim.id, isNew: true, snapshot: null };
 
       setProject({
@@ -1066,6 +1473,7 @@ export default function App() {
           activeDrawingId,
           nextDim,
           resolvedSlot,
+          resolvedActiveRevisionId,
         ),
       });
       setSelectedDimensionId(nextDim.id);
@@ -1106,7 +1514,10 @@ export default function App() {
         return;
       }
 
-      const nextGroup = createPointGroup(selectedPoints, activeDrawingId, page);
+      const nextGroup = {
+        ...createPointGroup(selectedPoints, activeDrawingId, page),
+        annotationRevisionId: resolvedActiveRevisionId,
+      };
       setProject((prev) => {
         if (!prev) return prev;
         const cleaned = (prev.pointGroups ?? [])
@@ -1557,6 +1968,7 @@ export default function App() {
       );
       const newPoint: Dimension = {
         ...baseDim,
+        annotationRevisionId: resolvedActiveRevisionId,
         kind: "point",
         name: desiredName,
         dimensionType: "",
@@ -1594,6 +2006,7 @@ export default function App() {
       if (!resolvedGroupId) {
         const createdGroup = {
           ...createPointGroup([newPoint], activeDrawingId, page),
+          annotationRevisionId: resolvedActiveRevisionId,
           calibration: savedCal,
         };
         resolvedGroupId = createdGroup.id;
@@ -1606,6 +2019,7 @@ export default function App() {
                   activeDrawingId,
                   newPoint,
                   insertSlot,
+                  resolvedActiveRevisionId,
                 ),
                 pointGroups: [...(prev.pointGroups ?? []), createdGroup],
               }
@@ -1620,6 +2034,7 @@ export default function App() {
             activeDrawingId,
             newPoint,
             insertSlot,
+            resolvedActiveRevisionId,
           );
           const byId = new Map(nextDimensions.map((d) => [d.id, d]));
           const updatedGroups = addPointsToGroup(
@@ -1678,7 +2093,10 @@ export default function App() {
       if (editingDimensionId) {
         handleCancelEditing();
       }
-      const dup = duplicateDimension(source, activeDrawingDimensions);
+      const dup = {
+        ...duplicateDimension(source, activeDrawingDimensions),
+        annotationRevisionId: resolvedActiveRevisionId,
+      };
       const insertSlot = sourceIdx + 1;
       editingOriginRef.current = { id: dup.id, isNew: true, snapshot: null };
       setProject((prev) =>
@@ -1690,6 +2108,7 @@ export default function App() {
                 activeDrawingId,
                 dup,
                 insertSlot,
+                resolvedActiveRevisionId,
               ),
             }
           : prev,
@@ -1733,7 +2152,9 @@ export default function App() {
       });
       if (sources.length === 0) return;
 
-      const dups = duplicateDimensionsBatch(sources, activeDrawingDimensions);
+      const dups = duplicateDimensionsBatch(sources, activeDrawingDimensions).map(
+        (d) => ({ ...d, annotationRevisionId: resolvedActiveRevisionId }),
+      );
       const insertSlot = lastSourceIdx + 1;
       setProject((prev) =>
         prev
@@ -1744,6 +2165,7 @@ export default function App() {
                 activeDrawingId,
                 dups,
                 insertSlot,
+                resolvedActiveRevisionId,
               ),
             }
           : prev,
@@ -2432,21 +2854,38 @@ export default function App() {
       nextDrawingPointGroups?: PointGroup[],
     ) => {
       if (!activeDrawingId) return;
+      const stampedDims = nextDrawingDimensions.map((d) => ({
+        ...d,
+        annotationRevisionId:
+          d.annotationRevisionId ?? resolvedActiveRevisionId,
+      }));
+      const stampedGroups = nextDrawingPointGroups?.map((g) => ({
+        ...g,
+        annotationRevisionId:
+          g.annotationRevisionId ?? resolvedActiveRevisionId,
+      }));
       setProject((prev) => {
         if (!prev) return prev;
         const nextAll = rebindSamePageLinkedPoints(
           replaceDrawingDimensionsOrder(
             prev.dimensions,
             activeDrawingId,
-            nextDrawingDimensions,
+            stampedDims,
+            resolvedActiveRevisionId,
           ),
         );
-        const mergedGroups = nextDrawingPointGroups
+        const mergedGroups = stampedGroups
           ? [
               ...(prev.pointGroups ?? []).filter(
-                (g) => g.drawingId !== activeDrawingId,
+                (g) =>
+                  !(
+                    g.drawingId === activeDrawingId &&
+                    (!resolvedActiveRevisionId ||
+                      (g.annotationRevisionId ?? resolvedActiveRevisionId) ===
+                        resolvedActiveRevisionId)
+                  ),
               ),
-              ...nextDrawingPointGroups,
+              ...stampedGroups,
             ]
           : (prev.pointGroups ?? []);
         return {
@@ -2457,7 +2896,7 @@ export default function App() {
       });
       markDirty();
     },
-    [activeDrawingId, markDirty],
+    [activeDrawingId, resolvedActiveRevisionId, markDirty],
   );
 
   const handleInsertAnnotationRows = useCallback(
@@ -2480,6 +2919,7 @@ export default function App() {
         const base = createDimension(working, activeDrawingId, null);
         let nextDim: Dimension = {
           ...base,
+          annotationRevisionId: resolvedActiveRevisionId,
           kind,
           name: "",
           page: null,
@@ -2507,13 +2947,21 @@ export default function App() {
                 activeDrawingId,
                 created,
                 insertSlot,
+                resolvedActiveRevisionId,
               ),
             }
           : prev,
       );
       markDirty();
     },
-    [project, activeDrawingId, activeDrawingDimensions, currentPage, markDirty],
+    [
+      project,
+      activeDrawingId,
+      resolvedActiveRevisionId,
+      activeDrawingDimensions,
+      currentPage,
+      markDirty,
+    ],
   );
 
   const handleAddAnnotationRow = useCallback(
@@ -2526,6 +2974,7 @@ export default function App() {
       );
       let nextDim: Dimension = {
         ...base,
+        annotationRevisionId: resolvedActiveRevisionId,
         kind,
         name: "",
         page: null,
@@ -2800,88 +3249,163 @@ export default function App() {
                   : "hidden"
               }
             >
-              <aside
-                className={`flex shrink-0 flex-col border-r border-neutral-800 bg-neutral-950 ${
-                  drawingSidebarView === "dimensions" && activeDrawing
-                    ? "w-[356px]"
-                    : "w-80"
-                }`}
-              >
-                {drawingSidebarView === "dimensions" && activeDrawing ? (
-                  <DimensionSidebar
-                    isActive={activeModule === "drawing"}
-                    dimensions={activeDrawingDimensions}
-                  pointGroups={activeDrawingPointGroups}
-                  selectedDimensionId={selectedDimensionId}
-                  selectedDimensionIds={selectedDimensionIds}
-                  editingDimensionId={editingDimensionId}
-                  placingDimensionId={placingDimensionId}
-                  pointCaptureDimensionId={
-                    pointCaptureState?.dimensionId ?? null
-                  }
-                  focusNameKey={focusNameKey}
-                  hasProject={activeDrawingId !== null}
-                  currentPage={currentPage}
-                  pageCount={pageCount}
-                  scrollToDimensionRequest={scrollSidebarRequest}
-                  onJumpToPage={handleJumpToPage}
-                  activeDrawingFilename={
-                    activeDrawing.version?.trim()
-                      ? `Version: ${activeDrawing.version.trim()}`
-                      : activeDrawing.filename
-                  }
-                  onBackToDrawings={() => {
-                    if (editingDimensionId) {
-                      handleCancelEditing();
-                    }
-                    setDrawingSidebarView("drawings");
-                  }}
-                  onAddDimension={handleAddDimension}
-                  onSortDimensions={handleSortDimensions}
-                  onReorderDimensions={handleReorderDimensions}
-                  onSelectDimension={handleSelectFromSidebar}
-                  onSelectDimensions={handleSelectMultiFromSidebar}
-                  onStartEditing={handleStartEditing}
-                  onFinishEditing={handleFinishEditing}
-                  onCancelEditing={handleCancelEditing}
-                  onUpdateDimension={handleUpdateDimension}
-                  onDuplicateDimension={handleDuplicateDimension}
-                  onDuplicateDimensions={handleDuplicateDimensions}
-                  onCreatePointGroup={handleCreatePointGroup}
-                  onRenamePointGroup={handleRenamePointGroup}
-                  onTogglePointGroupCollapsed={handleTogglePointGroupCollapsed}
-                  onSetAllPointGroupsCollapsed={handleSetAllPointGroupsCollapsed}
-                  onDeletePointGroup={(id) => void handleDeletePointGroup(id)}
-                  onResumePointEntryForGroup={handleResumePointEntryForGroup}
-                  onAddPointsToGroup={handleAddPointsToGroup}
-                  onRemovePointsFromGroups={handleRemovePointsFromGroups}
-                  onDeleteDimension={(id) => void handleDeleteDimension(id)}
-                  onStartPlacing={setPlacingDimensionId}
-                  onClearMarker={handleClearMarker}
-                  onAutoRecognizeDimension={handleAutoRecognizeDimension}
-                />
-              ) : (
-                <DrawingListSidebar
-                  activePart={activePart}
-                  drawings={activePartDrawings}
-                  activeDrawingId={activeDrawingId}
-                  latestDrawingId={activePartLatestDrawingId}
-                  dimCountByDrawing={dimCountByDrawing}
-                  onUploadPdf={() => {
-                    if (activePart) void handleAttachPdf(activePart.id);
-                  }}
-                  onSelectDrawing={(drwId) => void handleOpenDrawing(drwId)}
-                  onUpdateDrawingVersion={handleUpdateDrawingVersion}
-                  onMarkLatest={(drwId) => {
-                    if (activePart) handleMarkLatestDrawing(activePart.id, drwId);
-                  }}
-                  onRemoveDrawing={(drwId) => {
-                    if (activePart) void handleDetachPdf(activePart.id, drwId);
-                  }}
-                  onGoToProject={() => setActiveModule("project")}
-                />
-              )}
-            </aside>
+              <aside className="relative flex w-[356px] shrink-0 flex-col overflow-hidden border-r border-neutral-800 bg-neutral-950">
+                {(() => {
+                  const isShowingDimensions =
+                    drawingSidebarView === "dimensions" &&
+                    Boolean(activeDrawing);
+                  return (
+                    <div
+                      className={`flex h-full min-h-0 w-[200%] will-change-transform transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                        isShowingDimensions
+                          ? "translate-x-0"
+                          : "-translate-x-1/2"
+                      }`}
+                    >
+                      {/* Level 2 (left slot): slides in from left while Level 1 pushes right */}
+                      <div
+                        aria-hidden={!isShowingDimensions}
+                        className={`flex h-full min-h-0 w-1/2 shrink-0 flex-col ${
+                          isShowingDimensions ? "" : "pointer-events-none"
+                        }`}
+                      >
+                        <DimensionSidebar
+                          isActive={
+                            activeModule === "drawing" && isShowingDimensions
+                          }
+                          dimensions={activeDrawingDimensions}
+                          pointGroups={activeDrawingPointGroups}
+                          selectedDimensionId={selectedDimensionId}
+                          selectedDimensionIds={selectedDimensionIds}
+                          editingDimensionId={editingDimensionId}
+                          placingDimensionId={placingDimensionId}
+                          pointCaptureDimensionId={
+                            pointCaptureState?.dimensionId ?? null
+                          }
+                          focusNameKey={focusNameKey}
+                          hasProject={activeDrawingId !== null}
+                          currentPage={currentPage}
+                          pageCount={pageCount}
+                          scrollToDimensionRequest={scrollSidebarRequest}
+                          onJumpToPage={handleJumpToPage}
+                          activeDrawingFilename={
+                            activeDrawing
+                              ? (() => {
+                                  const drwLabel = activeDrawing.version?.trim()
+                                    ? `Version: ${activeDrawing.version.trim()}`
+                                    : activeDrawing.filename;
+                                  const revLabel =
+                                    activeAnnotationRevision?.name?.trim();
+                                  return revLabel
+                                    ? `${drwLabel} · ${revLabel}`
+                                    : drwLabel;
+                                })()
+                              : undefined
+                          }
+                          onBackToDrawings={() => {
+                            if (editingDimensionId) {
+                              handleCancelEditing();
+                            }
+                            setDrawingSidebarView("drawings");
+                          }}
+                          onAddDimension={handleAddDimension}
+                          onSortDimensions={handleSortDimensions}
+                          onReorderDimensions={handleReorderDimensions}
+                          onSelectDimension={handleSelectFromSidebar}
+                          onSelectDimensions={handleSelectMultiFromSidebar}
+                          onStartEditing={handleStartEditing}
+                          onFinishEditing={handleFinishEditing}
+                          onCancelEditing={handleCancelEditing}
+                          onUpdateDimension={handleUpdateDimension}
+                          onDuplicateDimension={handleDuplicateDimension}
+                          onDuplicateDimensions={handleDuplicateDimensions}
+                          onCreatePointGroup={handleCreatePointGroup}
+                          onRenamePointGroup={handleRenamePointGroup}
+                          onTogglePointGroupCollapsed={
+                            handleTogglePointGroupCollapsed
+                          }
+                          onSetAllPointGroupsCollapsed={
+                            handleSetAllPointGroupsCollapsed
+                          }
+                          onDeletePointGroup={(id) =>
+                            void handleDeletePointGroup(id)
+                          }
+                          onResumePointEntryForGroup={
+                            handleResumePointEntryForGroup
+                          }
+                          onAddPointsToGroup={handleAddPointsToGroup}
+                          onRemovePointsFromGroups={handleRemovePointsFromGroups}
+                          onDeleteDimension={(id) =>
+                            void handleDeleteDimension(id)
+                          }
+                          onStartPlacing={setPlacingDimensionId}
+                          onClearMarker={handleClearMarker}
+                          onAutoRecognizeDimension={handleAutoRecognizeDimension}
+                        />
+                      </div>
+
+                      {/* Level 1 (right slot): pushes right when entering Level 2, pulls back in from right on Back */}
+                      <div
+                        aria-hidden={isShowingDimensions}
+                        className={`flex h-full min-h-0 w-1/2 shrink-0 flex-col ${
+                          isShowingDimensions ? "pointer-events-none" : ""
+                        }`}
+                      >
+                        <DrawingListSidebar
+                          activePart={activePart}
+                          drawings={activePartDrawings}
+                          activeDrawingId={activeDrawingId}
+                          activeAnnotationRevisionId={resolvedActiveRevisionId}
+                          latestDrawingId={activePartLatestDrawingId}
+                          dimCountByRevision={dimCountByRevision}
+                          onUploadPdf={() => {
+                            if (activePart) void handleAttachPdf(activePart.id);
+                          }}
+                          onSelectDrawing={(drwId, revId) =>
+                            void handleOpenDrawing(drwId, revId)
+                          }
+                          onUpdateDrawingVersion={handleUpdateDrawingVersion}
+                          onReorderDrawings={(orderedIds) => {
+                            if (activePart)
+                              handleReorderDrawings(activePart.id, orderedIds);
+                          }}
+                          onMarkLatest={(drwId) => {
+                            if (activePart)
+                              handleMarkLatestDrawing(activePart.id, drwId);
+                          }}
+                          onRemoveDrawing={(drwId) => {
+                            if (activePart)
+                              void handleDetachPdf(activePart.id, drwId);
+                          }}
+                          copiedReviewName={copiedReview?.reviewName ?? null}
+                          onCopyAnnotationRevision={
+                            handleCopyAnnotationRevision
+                          }
+                          onPasteAnnotationRevision={
+                            handlePasteAnnotationRevision
+                          }
+                          onDuplicateAnnotationRevision={
+                            handleDuplicateAnnotationRevision
+                          }
+                          onCreateBlankAnnotationRevision={
+                            handleCreateBlankAnnotationRevision
+                          }
+                          onRenameAnnotationRevision={
+                            handleRenameAnnotationRevision
+                          }
+                          onMarkLatestAnnotationRevision={
+                            handleMarkLatestAnnotationRevision
+                          }
+                          onDeleteAnnotationRevision={(drwId, revId) =>
+                            void handleDeleteAnnotationRevision(drwId, revId)
+                          }
+                          onGoToProject={() => setActiveModule("project")}
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
+              </aside>
 
             {activeDrawing && pdfBytes ? (
               <PdfViewer

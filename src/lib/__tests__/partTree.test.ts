@@ -6,6 +6,8 @@ import {
   deletePartSubtree,
   layoutPartTree,
   normalizeLoadedProject,
+  reorderDrawingIds,
+  sortDrawings,
   reparentPart,
   resolveLatestDrawingId,
 } from "../partTree";
@@ -187,5 +189,71 @@ describe("partTree", () => {
 
     const staleExplicit: Part = { ...twoDrawings, latestDrawingId: "d-deleted" };
     expect(resolveLatestDrawingId(staleExplicit)).toBe("d-2");
+  });
+
+  it("sorts drawings by custom order, alphabetical ascending, and descending", () => {
+    const drawings = [
+      {
+        id: "d-b",
+        filename: "part_revB.pdf",
+        archivePath: "drawings/d-b.pdf",
+        pageCount: 2,
+        version: "B",
+      },
+      {
+        id: "d-a",
+        filename: "part_revA.pdf",
+        archivePath: "drawings/d-a.pdf",
+        pageCount: 2,
+        version: "A",
+      },
+      {
+        id: "d-c",
+        filename: "part_revC.pdf",
+        archivePath: "drawings/d-c.pdf",
+        pageCount: 2,
+        version: "C",
+      },
+    ];
+
+    expect(sortDrawings(drawings, "custom").map((d) => d.id)).toEqual([
+      "d-b",
+      "d-a",
+      "d-c",
+    ]);
+    expect(sortDrawings(drawings, "alpha_asc").map((d) => d.id)).toEqual([
+      "d-a",
+      "d-b",
+      "d-c",
+    ]);
+    expect(sortDrawings(drawings, "alpha_desc").map((d) => d.id)).toEqual([
+      "d-c",
+      "d-b",
+      "d-a",
+    ]);
+  });
+
+  it("reorders drawing IDs accurately for pointer drag-and-drop slots", () => {
+    expect(reorderDrawingIds(["d-1", "d-2", "d-3"], "d-3", 0)).toEqual([
+      "d-3",
+      "d-1",
+      "d-2",
+    ]);
+    expect(reorderDrawingIds(["d-1", "d-2", "d-3"], "d-1", 3)).toEqual([
+      "d-2",
+      "d-3",
+      "d-1",
+    ]);
+    // Dropping into the item's own adjacent slot is a no-op
+    expect(reorderDrawingIds(["d-1", "d-2", "d-3"], "d-2", 1)).toEqual([
+      "d-1",
+      "d-2",
+      "d-3",
+    ]);
+    expect(reorderDrawingIds(["d-1", "d-2", "d-3"], "d-2", 2)).toEqual([
+      "d-1",
+      "d-2",
+      "d-3",
+    ]);
   });
 });

@@ -84,6 +84,8 @@ pub struct Dimension {
     #[serde(default)]
     pub drawing_id: Option<String>,
     #[serde(default)]
+    pub annotation_revision_id: Option<String>,
+    #[serde(default)]
     pub page: Option<u32>,
     #[serde(default = "default_annotation_kind")]
     pub kind: String,
@@ -130,6 +132,15 @@ pub struct Part {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct AnnotationRevision {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct DrawingEntry {
     pub id: String,
     #[serde(default)]
@@ -137,6 +148,10 @@ pub struct DrawingEntry {
     pub filename: String,
     pub archive_path: String,
     pub page_count: u32,
+    #[serde(default)]
+    pub annotation_revisions: Vec<AnnotationRevision>,
+    #[serde(default)]
+    pub latest_annotation_revision_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -161,6 +176,8 @@ pub struct PointGroupCalibration {
 pub struct PointGroup {
     pub id: String,
     pub drawing_id: String,
+    #[serde(default)]
+    pub annotation_revision_id: Option<String>,
     pub page: u32,
     pub name: String,
     #[serde(default)]
@@ -518,6 +535,19 @@ mod tests {
                     filename: "c_cover_asm.pdf".to_string(),
                     archive_path: "drawings/drw-1.pdf".to_string(),
                     page_count: 10,
+                    annotation_revisions: vec![
+                        AnnotationRevision {
+                            id: "rev-drw-1-1".to_string(),
+                            name: "Rev 1".to_string(),
+                            created_at: "2026-11-28T00:00:00Z".to_string(),
+                        },
+                        AnnotationRevision {
+                            id: "rev-drw-1-2".to_string(),
+                            name: "Disputed Copy".to_string(),
+                            created_at: "2026-11-28T01:00:00Z".to_string(),
+                        },
+                    ],
+                    latest_annotation_revision_id: Some("rev-drw-1-1".to_string()),
                 },
                 DrawingEntry {
                     id: "drw-2".to_string(),
@@ -525,12 +555,15 @@ mod tests {
                     filename: "metal_c_cover.pdf".to_string(),
                     archive_path: "drawings/drw-2.pdf".to_string(),
                     page_count: 4,
+                    annotation_revisions: vec![],
+                    latest_annotation_revision_id: None,
                 },
             ],
             dimensions: vec![
                 Dimension {
                     id: "dim-1".to_string(),
                     drawing_id: Some("drw-1".to_string()),
+                    annotation_revision_id: Some("rev-drw-1-1".to_string()),
                     page: Some(1),
                     kind: "linear".to_string(),
                     balloon_number: 1,
@@ -558,6 +591,7 @@ mod tests {
                 Dimension {
                     id: "dim-2".to_string(),
                     drawing_id: Some("drw-2".to_string()),
+                    annotation_revision_id: None,
                     page: None,
                     kind: "gdt".to_string(),
                     balloon_number: 1,
@@ -594,6 +628,7 @@ mod tests {
             point_groups: vec![PointGroup {
                 id: "grp-1".to_string(),
                 drawing_id: "drw-1".to_string(),
+                annotation_revision_id: Some("rev-drw-1-1".to_string()),
                 page: 1,
                 name: "F1~F3".to_string(),
                 point_ids: vec!["pt-1".to_string(), "pt-2".to_string(), "pt-3".to_string()],

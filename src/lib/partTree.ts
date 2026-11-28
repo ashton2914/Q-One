@@ -1,5 +1,6 @@
-import type { Part, ProjectData } from "../types/project";
+import type { DrawingEntry, Part, ProjectData } from "../types/project";
 import { CURRENT_SCHEMA_VERSION } from "./dimensions";
+import { ensureDrawingAnnotationRevisions } from "./annotationRevisions";
 import { rebindSamePageLinkedPoints } from "./pointGroups";
 
 function generateId(): string {
@@ -281,11 +282,85 @@ export function layoutPartTree(
   };
 }
 
+export type DrawingSortMode = "custom" | "alpha_asc" | "alpha_desc";
+
+export function getDrawingSortLabel(
+  drawing: Pick<DrawingEntry, "version" | "filename">,
+): string {
+  return (drawing.version ?? "").trim() || drawing.filename.trim();
+}
+
+export function sortDrawings(
+  drawings: readonly DrawingEntry[],
+  mode: DrawingSortMode,
+): DrawingEntry[] {
+  if (mode === "custom") {
+    return [...drawings];
+  }
+  const direction = mode === "alpha_asc" ? 1 : -1;
+  return [...drawings].sort((a, b) => {
+    const labelA = getDrawingSortLabel(a);
+    const labelB = getDrawingSortLabel(b);
+    const primary = labelA.localeCompare(labelB, undefined, {
+      numeric: true,
+      sensitivity: "base",
+    });
+    if (primary !== 0) return primary * direction;
+    return (
+      a.filename.localeCompare(b.filename, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      }) * direction
+    );
+  });
+}
+
+export function reorderDrawingIds(
+  drawingIds: readonly string[],
+  sourceId: string,
+  targetSlot: number,
+): string[] {
+  const sourceIdx = drawingIds.indexOf(sourceId);
+  if (sourceIdx === -1) return [...drawingIds];
+  const clampedSlot = Math.max(0, Math.min(drawingIds.length, targetSlot));
+  if (clampedSlot === sourceIdx || clampedSlot === sourceIdx + 1) {
+    return [...drawingIds];
+  }
+  const next = [...drawingIds];
+  const [moved] = next.splice(sourceIdx, 1);
+  const insertIdx = sourceIdx < clampedSlot ? clampedSlot - 1 : clampedSlot;
+  next.splice(insertIdx, 0, moved);
+  return next;
+}
+
 export function normalizeLoadedProject(project: ProjectData): ProjectData {
-  const defaultDrawingId = project.drawings[0]?.id ?? null;
+  const drawings: DrawingEntry[] = project.drawings.map((drw) => {
+    const { revisions, latestRevisionId } = ensureDrawingAnnotationRevisions(
+      drw,
+      project.createdAt,
+    );
+    return {
+      ...drw,
+      annotationRevisions: revisions,
+      latestAnnotationRevisionId: latestRevisionId,
+    };
+  });
+
+  const defaultDrawingId = drawings[0]?.id ?? null;
+  const revisionIdsByDrawing = new Map<string, Set<string>>();
+  const latestRevisionByDrawing = new Map<string, string>();
+  for (const drw of drawings) {
+    revisionIdsByDrawing.set(
+      drw.id,
+      new Set((drw.annotationRevisions ?? []).map((r) => r.id)),
+    );
+    if (drw.latestAnnotationRevisionId) {
+      latestRevisionByDrawing.set(drw.id, drw.latestAnnotationRevisionId);
+    }
+  }
 
   let parts = Array.isArray(project.parts) ? [...project.parts] : [];
-  if (parts.length === 0 && project.drawings.length > 0) {
+  if (parts.length === 0 && drawings.length > 0) {
     parts = [
       {
         id: generateId(),
@@ -294,24 +369,54 @@ export function normalizeLoadedProject(project: ProjectData): ProjectData {
         partNumber: "",
         revision: "",
         notes: "",
-        drawingIds: project.drawings.map((d) => d.id),
+        drawingIds: drawings.map((d) => d.id),
       },
     ];
   }
 
+  const resolveRevisionId = (
+    drawingId: string | null,
+    existingRevisionId?: string | null,
+  ): string | null => {
+    if (!drawingId) return existingRevisionId ?? null;
+    const validIds = revisionIdsByDrawing.get(drawingId);
+    if (existingRevisionId && validIds?.has(existingRevisionId)) {
+      return existingRevisionId;
+    }
+    return latestRevisionByDrawing.get(drawingId) ?? null;
+  };
+
   const dimensions = rebindSamePageLinkedPoints(
-    project.dimensions.map((d) => ({
-      ...d,
-      drawingId: d.drawingId ?? d.marker?.drawingId ?? defaultDrawingId,
-      dimensionType: d.dimensionType ?? "",
-      quantity: d.quantity && d.quantity > 0 ? d.quantity : 1,
-    })),
+    project.dimensions.map((d) => {
+      const drawingId = d.drawingId ?? d.marker?.drawingId ?? defaultDrawingId;
+      return {
+        ...d,
+        drawingId,
+        annotationRevisionId: resolveRevisionId(
+          drawingId,
+          d.annotationRevisionId,
+        ),
+        dimensionType: d.dimensionType ?? "",
+        quantity: d.quantity && d.quantity > 0 ? d.quantity : 1,
+      };
+    }),
   );
+
+  const pointGroups = (
+    Array.isArray(project.pointGroups) ? project.pointGroups : []
+  ).map((g) => ({
+    ...g,
+    annotationRevisionId: resolveRevisionId(
+      g.drawingId,
+      g.annotationRevisionId,
+    ),
+  }));
 
   return {
     ...project,
     parts,
+    drawings,
     dimensions,
-    pointGroups: Array.isArray(project.pointGroups) ? project.pointGroups : [],
+    pointGroups,
   };
 }
