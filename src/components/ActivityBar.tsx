@@ -1,20 +1,23 @@
-import { FileText, Network } from "lucide-react";
+import { FileText, Network, Table2 } from "lucide-react";
 import type { ActiveModule } from "../types/project";
 
 export interface ActivityBarProps {
   activeModule: ActiveModule;
   onSelectModule: (module: ActiveModule) => void;
   hasActiveDrawing: boolean;
+  hasAnnotations?: boolean;
 }
 
 export function ActivityBar({
   activeModule,
   onSelectModule,
   hasActiveDrawing,
+  hasAnnotations = false,
 }: ActivityBarProps) {
   const items: Array<{
     id: ActiveModule;
     label: string;
+    shortLabel?: string;
     icon: typeof Network;
     indicator?: boolean;
   }> = [
@@ -24,6 +27,13 @@ export function ActivityBar({
       label: "Drawing",
       icon: FileText,
       indicator: hasActiveDrawing,
+    },
+    {
+      id: "annotations",
+      label: "Annotations",
+      shortLabel: "Annot.",
+      icon: Table2,
+      indicator: hasAnnotations,
     },
   ];
 
@@ -54,7 +64,7 @@ export function ActivityBar({
             )}
             <Icon className="h-4 w-4" />
             <span className="mt-0.5 text-[9px] font-medium leading-none">
-              {item.label}
+              {item.shortLabel ?? item.label}
             </span>
             {item.indicator && !isActive && (
               <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-emerald-400" />

@@ -1,10 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import {
+  DEFAULT_PDF_DISPLAY_SETTINGS,
+  normalizePdfDisplaySettings,
+  type PdfDisplaySettings,
+} from "./pdfDisplay";
 import type {
   ImportedPdfPayload,
   OpenedProjectPayload,
   ProjectData,
 } from "../types/project";
+
+export interface AppSettings {
+  pdfDisplay: PdfDisplaySettings;
+}
+
+const LOCAL_SETTINGS_STORAGE_KEY = "qone.appSettings.v1";
 
 interface RawImportedPdfPayload {
   drawingId: string;
@@ -92,4 +103,44 @@ export async function openProject(path: string): Promise<OpenedProjectPayload> {
     activeDrawingId: raw.activeDrawingId,
     pdfBytes: raw.pdfBytes ? new Uint8Array(raw.pdfBytes) : null,
   };
+}
+
+export async function loadAppSettings(): Promise<AppSettings> {
+  try {
+    const raw = await invoke<Partial<AppSettings>>("load_app_settings");
+    return {
+      pdfDisplay: normalizePdfDisplaySettings(raw?.pdfDisplay),
+    };
+  } catch {
+    try {
+      const stored = window.localStorage.getItem(LOCAL_SETTINGS_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as Partial<AppSettings>;
+        return {
+          pdfDisplay: normalizePdfDisplaySettings(parsed?.pdfDisplay),
+        };
+      }
+    } catch {
+      // Ignore storage failures
+    }
+    return { pdfDisplay: { ...DEFAULT_PDF_DISPLAY_SETTINGS } };
+  }
+}
+
+export async function saveAppSettings(settings: AppSettings): Promise<void> {
+  const normalized: AppSettings = {
+    pdfDisplay: normalizePdfDisplaySettings(settings.pdfDisplay),
+  };
+  try {
+    await invoke<void>("save_app_settings", { settings: normalized });
+  } catch {
+    try {
+      window.localStorage.setItem(
+        LOCAL_SETTINGS_STORAGE_KEY,
+        JSON.stringify(normalized),
+      );
+    } catch {
+      // Ignore storage failures outside Tauri
+    }
+  }
 }

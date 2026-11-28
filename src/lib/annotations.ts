@@ -10,13 +10,71 @@ import type {
 export const ANNOTATION_KIND_OPTIONS: Array<{
   value: AnnotationKind;
   label: string;
+  shortcut: string;
 }> = [
-  { value: "linear", label: "Linear" },
-  { value: "gdt", label: "GD&T" },
-  { value: "note", label: "Note" },
-  { value: "datum", label: "Datum" },
-  { value: "point", label: "Point" },
+  { value: "linear", label: "Linear", shortcut: "1" },
+  { value: "gdt", label: "GD&T", shortcut: "2" },
+  { value: "non_dimensional", label: "Non-Dimensional", shortcut: "3" },
+  { value: "note", label: "Note", shortcut: "4" },
+  { value: "point", label: "Point", shortcut: "5" },
+  { value: "datum", label: "Datum", shortcut: "6" },
 ];
+
+export type EditShortcutAction =
+  | { type: "kind"; kind: AnnotationKind }
+  | { type: "recognize" }
+  | { type: "focusFirstInput" }
+  | null;
+
+/**
+ * Resolves single-key edit-mode shortcuts (1–6 to switch annotation kind, G to trigger Auto-Recognize,
+ * Tab to focus the first text input).
+ * Ignores events when composing (IME), holding modifier keys, or typing inside form inputs.
+ */
+export function resolveEditModeShortcut(
+  event: {
+    key: string;
+    shiftKey?: boolean;
+    metaKey: boolean;
+    ctrlKey: boolean;
+    altKey: boolean;
+    isComposing?: boolean;
+    targetTagName?: string;
+    isContentEditable?: boolean;
+  },
+  _currentKind: AnnotationKind,
+  hasMarker: boolean,
+): EditShortcutAction {
+  if (event.isComposing || event.metaKey || event.ctrlKey || event.altKey) {
+    return null;
+  }
+  const tag = (event.targetTagName ?? "").toUpperCase();
+  if (
+    tag === "INPUT" ||
+    tag === "TEXTAREA" ||
+    tag === "SELECT" ||
+    event.isContentEditable
+  ) {
+    return null;
+  }
+
+  if (event.key === "Tab" && !event.shiftKey) {
+    return { type: "focusFirstInput" };
+  }
+
+  const matchedKind = ANNOTATION_KIND_OPTIONS.find(
+    (opt) => opt.shortcut === event.key,
+  );
+  if (matchedKind) {
+    return { type: "kind", kind: matchedKind.value };
+  }
+
+  if (event.key.toLowerCase() === "g" && hasMarker) {
+    return { type: "recognize" };
+  }
+
+  return null;
+}
 
 export interface GdtSymbolOption {
   value: GdtSymbol;

@@ -1,4 +1,5 @@
 pub mod project;
+pub mod settings;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -11,7 +12,9 @@ pub fn run() {
             project::remove_drawing_bytes,
             project::clear_drawings,
             project::save_project,
-            project::open_project
+            project::open_project,
+            settings::load_app_settings,
+            settings::save_app_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running Q-One application");

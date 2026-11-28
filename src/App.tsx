@@ -8,12 +8,14 @@ import {
   X,
 } from "lucide-react";
 import { ActivityBar } from "./components/ActivityBar";
+import { AnnotationsWorkspace } from "./components/AnnotationsWorkspace";
 import { DimensionSidebar } from "./components/DimensionSidebar";
 import { DrawingListSidebar } from "./components/DrawingListSidebar";
 import { MenuBar } from "./components/MenuBar";
 import {
   PdfViewer,
   type DrawingSwitchOption,
+  type PointEntrySession,
   type ScrollToPageRequest,
 } from "./components/PdfViewer";
 import { ProjectWorkspace } from "./components/ProjectWorkspace";
@@ -24,8 +26,43 @@ import {
   createDimension,
   createProjectFromPdf,
   duplicateDimension,
+  duplicateDimensionsBatch,
+  getAnnotationPage,
+  insertDimensionAtSlot,
+  insertDimensionsAtSlot,
+  reorderWithinSection,
+  replaceDrawingDimensionsOrder,
+  resolveAdjacentDimensionId,
+  sortDrawingAnnotations,
   validateDimensionId,
 } from "./lib/dimensions";
+import {
+  addPointsToGroup,
+  computeCalibratedPointCoords,
+  createEmptyCalibration,
+  createPointGroup,
+  formatPointGroupDefaultName,
+  hasPointIdCollisionOnPage,
+  incrementPointId,
+  prunePointGroups,
+  recalculatePointGroupCoordinates,
+  rebindSamePageLinkedPoints,
+  removePointsFromGroups,
+  resolveUniquePointIdOnPage,
+  suggestNextPointIdForGroup,
+} from "./lib/pointGroups";
+import {
+  createDefaultGdtSpec,
+  createDefaultPointSpec,
+  getAnnotationKind,
+} from "./lib/annotations";
+import {
+  POINT_CAPTURE_STEPS,
+  parseAnnotationFromRegionText,
+  parsePointFromFieldCaptures,
+  type PointCaptureField,
+} from "./lib/annotationRecognize";
+import { extractTextLinesInMarker } from "./lib/pdfTextExtract";
 import {
   createEmptyProject,
   createPart,
@@ -46,15 +83,19 @@ import {
   saveProject,
 } from "./lib/tauriApi";
 import {
+  computeHighlightUnionRegion,
   shouldBlockWindowClose,
   shouldClearDirtyAfterSave,
 } from "./lib/viewerState";
 import type {
   ActiveModule,
+  AnnotationKind,
   Dimension,
   DrawingEntry,
   MarkerPosition,
   Part,
+  PointGroup,
+  PointGroupCalibration,
   ProjectData,
 } from "./types/project";
 
@@ -80,9 +121,17 @@ export default function App() {
   const [fitRequestKey, setFitRequestKey] = useState<number>(0);
   const [scrollToPageRequest, setScrollToPageRequest] =
     useState<ScrollToPageRequest | null>(null);
+  const [scrollSidebarRequest, setScrollSidebarRequest] = useState<{
+    id: string;
+    key: number;
+    block?: ScrollLogicalPosition;
+  } | null>(null);
 
   const [selectedDimensionId, setSelectedDimensionId] = useState<string | null>(
     null,
+  );
+  const [selectedDimensionIds, setSelectedDimensionIds] = useState<string[]>(
+    [],
   );
   const [editingDimensionId, setEditingDimensionId] = useState<string | null>(
     null,
@@ -90,6 +139,21 @@ export default function App() {
   const [placingDimensionId, setPlacingDimensionId] = useState<string | null>(
     null,
   );
+  const [pointCaptureState, setPointCaptureState] = useState<{
+    dimensionId: string;
+    page: number;
+    stepIndex: number;
+    boxes: Partial<
+      Record<
+        PointCaptureField,
+        { page: number; x: number; y: number; width: number; height: number }
+      >
+    >;
+  } | null>(null);
+  const [pointEntrySession, setPointEntrySession] =
+    useState<PointEntrySession | null>(null);
+  const [copiedPointCalibration, setCopiedPointCalibration] =
+    useState<PointGroupCalibration | null>(null);
   const [focusNameKey, setFocusNameKey] = useState<number>(0);
   const [isDirty, setIsDirty] = useState<boolean>(false);
   const [status, setStatus] = useState<StatusMessage | null>(null);
@@ -104,6 +168,36 @@ export default function App() {
   const isSavingRef = useRef<boolean>(false);
   const editRevisionRef = useRef<number>(0);
   const drawingLoadSeqRef = useRef<number>(0);
+  const pageAspectRatiosRef = useRef<number[]>([]);
+  const suppressPdfToSidebarSyncUntilRef = useRef<number>(0);
+  const lastSelectedDimensionIdRef = useRef<string | null>(null);
+  const applyPointCaptureRef = useRef<() => Promise<void>>(async () => {});
+  const advancePointCaptureStepRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    if (selectedDimensionId) {
+      lastSelectedDimensionIdRef.current = selectedDimensionId;
+    }
+  }, [selectedDimensionId]);
+
+  useEffect(() => {
+    if (
+      pointCaptureState &&
+      (!editingDimensionId ||
+        pointCaptureState.dimensionId !== editingDimensionId)
+    ) {
+      setPointCaptureState(null);
+    }
+  }, [editingDimensionId, pointCaptureState]);
+
+  useEffect(() => {
+    setPointEntrySession(null);
+  }, [activeDrawingId]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedDimensionId(null);
+    setSelectedDimensionIds([]);
+  }, []);
 
   const markDirty = useCallback(() => {
     editRevisionRef.current += 1;
@@ -152,6 +246,22 @@ export default function App() {
       (d) => (d.drawingId ?? d.marker?.drawingId ?? null) === activeDrawingId,
     );
   }, [project, activeDrawingId]);
+
+  const activeDrawingPointGroups = useMemo(() => {
+    if (!project || !activeDrawingId) return [];
+    return (project.pointGroups ?? []).filter(
+      (g) => g.drawingId === activeDrawingId,
+    );
+  }, [project, activeDrawingId]);
+
+  // Keep selectedDimensionIds pruned to existing items on the active drawing
+  useEffect(() => {
+    const validIds = new Set(activeDrawingDimensions.map((d) => d.id));
+    setSelectedDimensionIds((prev) => {
+      const next = prev.filter((id) => validIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [activeDrawingDimensions]);
 
   const drawingSwitchOptions = useMemo<DrawingSwitchOption[]>(() => {
     if (!project) return [];
@@ -826,7 +936,10 @@ export default function App() {
 
   // Drawing / Dimension handlers
   const handlePageCountLoaded = useCallback(
-    (count: number) => {
+    (count: number, aspectRatios?: number[]) => {
+      if (aspectRatios) {
+        pageAspectRatiosRef.current = aspectRatios;
+      }
       if (!activeDrawingId) return;
       setProject((prev) => {
         if (!prev) return prev;
@@ -840,38 +953,753 @@ export default function App() {
     [activeDrawingId],
   );
 
-  const handleAddDimension = useCallback(() => {
-    if (!project || !activeDrawingId) return;
-    const nextDim = createDimension(activeDrawingDimensions, activeDrawingId);
-    editingOriginRef.current = { id: nextDim.id, isNew: true, snapshot: null };
-    setProject({
-      ...project,
-      dimensions: [nextDim, ...project.dimensions],
+  const handleSortDimensions = useCallback(() => {
+    if (!activeDrawingId) return;
+    setProject((prev) => {
+      if (!prev) return prev;
+      const active = prev.dimensions.filter(
+        (d) => (d.drawingId ?? d.marker?.drawingId ?? null) === activeDrawingId,
+      );
+      if (active.length < 2) return prev;
+      const sorted = sortDrawingAnnotations(active);
+      return {
+        ...prev,
+        dimensions: replaceDrawingDimensionsOrder(
+          prev.dimensions,
+          activeDrawingId,
+          sorted,
+        ),
+      };
     });
-    setSelectedDimensionId(nextDim.id);
-    setEditingDimensionId(nextDim.id);
-    setPlacingDimensionId(nextDim.id);
-    setFocusNameKey((k) => k + 1);
     markDirty();
-  }, [project, activeDrawingId, activeDrawingDimensions, markDirty]);
+    showStatus("info", "Sorted annotations");
+  }, [activeDrawingId, markDirty, showStatus]);
+
+  const handleReorderDimensions = useCallback(
+    (sourceId: string, targetSectionSlot: number) => {
+      if (!activeDrawingId) return;
+      let changed = false;
+      setProject((prev) => {
+        if (!prev) return prev;
+        const active = prev.dimensions.filter(
+          (d) => (d.drawingId ?? d.marker?.drawingId ?? null) === activeDrawingId,
+        );
+        const reordered = reorderWithinSection(
+          active,
+          sourceId,
+          targetSectionSlot,
+        );
+        const sameOrder =
+          reordered.length === active.length &&
+          reordered.every((d, i) => d.id === active[i].id);
+        if (sameOrder) return prev;
+        changed = true;
+        return {
+          ...prev,
+          dimensions: replaceDrawingDimensionsOrder(
+            prev.dimensions,
+            activeDrawingId,
+            reordered,
+          ),
+        };
+      });
+      if (changed) {
+        markDirty();
+      }
+    },
+    [activeDrawingId, markDirty],
+  );
+
+  const handleAddDimension = useCallback(
+    (insertSlot?: number, explicitPage?: number | null) => {
+      if (!project || !activeDrawingId) return;
+
+      // Resolve insertion slot & locked owning page
+      let resolvedSlot = insertSlot;
+      let owningPage: number | null =
+        explicitPage !== undefined ? explicitPage : null;
+
+      if (resolvedSlot === undefined) {
+        const anchorId =
+          selectedDimensionId ?? lastSelectedDimensionIdRef.current;
+        if (anchorId) {
+          const selIdx = activeDrawingDimensions.findIndex(
+            (d) => d.id === anchorId,
+          );
+          if (selIdx !== -1) {
+            resolvedSlot = selIdx + 1;
+            if (explicitPage === undefined) {
+              owningPage =
+                getAnnotationPage(activeDrawingDimensions[selIdx]) ??
+                currentPage;
+            }
+          }
+        }
+        if (resolvedSlot === undefined) {
+          const targetP = owningPage ?? currentPage;
+          const lastOnPageIdx = activeDrawingDimensions.reduce(
+            (acc, d, idx) => (getAnnotationPage(d) === targetP ? idx : acc),
+            -1,
+          );
+          resolvedSlot =
+            lastOnPageIdx !== -1
+              ? lastOnPageIdx + 1
+              : activeDrawingDimensions.length;
+        }
+      }
+
+      if (owningPage === null && explicitPage === undefined) {
+        owningPage = currentPage;
+      }
+
+      const nextDim = createDimension(
+        activeDrawingDimensions,
+        activeDrawingId,
+        owningPage,
+      );
+      editingOriginRef.current = { id: nextDim.id, isNew: true, snapshot: null };
+
+      setProject({
+        ...project,
+        dimensions: insertDimensionAtSlot(
+          project.dimensions,
+          activeDrawingId,
+          nextDim,
+          resolvedSlot,
+        ),
+      });
+      setSelectedDimensionId(nextDim.id);
+      setSelectedDimensionIds([nextDim.id]);
+      setEditingDimensionId(nextDim.id);
+      setPlacingDimensionId(nextDim.id);
+      setFocusNameKey((k) => k + 1);
+      setScrollSidebarRequest({ id: nextDim.id, key: Date.now() });
+      if (owningPage !== null && owningPage !== currentPage) {
+        setCurrentPage(owningPage);
+        setScrollToPageRequest({ page: owningPage, key: Date.now() });
+      }
+      markDirty();
+    },
+    [
+      project,
+      activeDrawingId,
+      activeDrawingDimensions,
+      selectedDimensionId,
+      currentPage,
+      markDirty,
+    ],
+  );
+
+  const handleCreatePointGroup = useCallback(
+    (pointIds: string[]) => {
+      if (!project || !activeDrawingId || pointIds.length < 2) return;
+      const idSet = new Set(pointIds);
+      const selectedPoints = activeDrawingDimensions.filter(
+        (d) => idSet.has(d.id) && getAnnotationKind(d) === "point",
+      );
+      if (selectedPoints.length < 2) return;
+      const page = getAnnotationPage(selectedPoints[0]);
+      if (
+        page === null ||
+        selectedPoints.some((p) => getAnnotationPage(p) !== page)
+      ) {
+        return;
+      }
+
+      const nextGroup = createPointGroup(selectedPoints, activeDrawingId, page);
+      setProject((prev) => {
+        if (!prev) return prev;
+        const cleaned = (prev.pointGroups ?? [])
+          .map((g) => ({
+            ...g,
+            pointIds: g.pointIds.filter((pid) => !idSet.has(pid)),
+          }))
+          .filter((g) => g.pointIds.length > 0);
+        return {
+          ...prev,
+          pointGroups: [...cleaned, nextGroup],
+        };
+      });
+      markDirty();
+      showStatus("info", `Created point group "${nextGroup.name}"`);
+    },
+    [project, activeDrawingId, activeDrawingDimensions, markDirty, showStatus],
+  );
+
+  const handleRenamePointGroup = useCallback(
+    (groupId: string, nextName: string) => {
+      setProject((prev) => {
+        if (!prev) return prev;
+        const trimmed = nextName.trim();
+        return {
+          ...prev,
+          pointGroups: (prev.pointGroups ?? []).map((g) => {
+            if (g.id !== groupId) return g;
+            if (trimmed) return { ...g, name: trimmed };
+            const memberNames = g.pointIds
+              .map(
+                (pid) =>
+                  prev.dimensions.find((d) => d.id === pid)?.name ?? "",
+              )
+              .filter(Boolean);
+            return {
+              ...g,
+              name: formatPointGroupDefaultName(memberNames),
+            };
+          }),
+        };
+      });
+      markDirty();
+    },
+    [markDirty],
+  );
+
+  const handleTogglePointGroupCollapsed = useCallback(
+    (groupId: string) => {
+      setProject((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          pointGroups: (prev.pointGroups ?? []).map((g) =>
+            g.id === groupId ? { ...g, collapsed: !g.collapsed } : g,
+          ),
+        };
+      });
+      markDirty();
+    },
+    [markDirty],
+  );
+
+  const handleSetAllPointGroupsCollapsed = useCallback(
+    (collapsed: boolean) => {
+      if (!activeDrawingId) return;
+      let changed = false;
+      setProject((prev) => {
+        if (!prev) return prev;
+        const groups = prev.pointGroups ?? [];
+        const nextGroups = groups.map((g) => {
+          if (g.drawingId !== activeDrawingId) return g;
+          if (Boolean(g.collapsed) === collapsed) return g;
+          changed = true;
+          return { ...g, collapsed };
+        });
+        return changed ? { ...prev, pointGroups: nextGroups } : prev;
+      });
+      if (changed) {
+        markDirty();
+      }
+    },
+    [activeDrawingId, markDirty],
+  );
+
+  const handleDeletePointGroup = useCallback(
+    async (groupId: string) => {
+      const grp = (project?.pointGroups ?? []).find((g) => g.id === groupId);
+      const label = grp?.name.trim()
+        ? `point group "${grp.name.trim()}"`
+        : "this point group";
+      const ok = await confirmAction(
+        `Ungroup ${label}? All member points will be kept.`,
+        {
+          title: "Ungroup Points",
+          kind: "warning",
+        },
+      );
+      if (!ok) return;
+
+      setProject((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          pointGroups: (prev.pointGroups ?? []).filter((g) => g.id !== groupId),
+        };
+      });
+      setPointEntrySession((prev) =>
+        prev && prev.groupId === groupId ? { ...prev, groupId: null } : prev,
+      );
+      markDirty();
+      showStatus("info", "Ungrouped points");
+    },
+    [project, markDirty, showStatus],
+  );
+
+  const handleAddPointsToGroup = useCallback(
+    (groupId: string, pointIds: string[]) => {
+      if (pointIds.length === 0) return;
+      setProject((prev) => {
+        if (!prev) return prev;
+        const byId = new Map(prev.dimensions.map((d) => [d.id, d]));
+        return {
+          ...prev,
+          pointGroups: addPointsToGroup(
+            prev.pointGroups ?? [],
+            groupId,
+            pointIds,
+            byId,
+          ),
+        };
+      });
+      markDirty();
+      showStatus(
+        "info",
+        `Added ${pointIds.length} point${pointIds.length > 1 ? "s" : ""} to group`,
+      );
+    },
+    [markDirty, showStatus],
+  );
+
+  const handleRemovePointsFromGroups = useCallback(
+    (pointIds: string[]) => {
+      if (pointIds.length === 0) return;
+      setProject((prev) => {
+        if (!prev) return prev;
+        const byId = new Map(prev.dimensions.map((d) => [d.id, d]));
+        return {
+          ...prev,
+          pointGroups: removePointsFromGroups(
+            prev.pointGroups ?? [],
+            pointIds,
+            byId,
+          ),
+        };
+      });
+      markDirty();
+      showStatus(
+        "info",
+        `Removed ${pointIds.length} point${pointIds.length > 1 ? "s" : ""} from group`,
+      );
+    },
+    [markDirty, showStatus],
+  );
+
+  const handleTogglePointEntry = useCallback(() => {
+    if (!project || !activeDrawingId) return;
+    if (pointEntrySession) {
+      setPointEntrySession(null);
+      return;
+    }
+    if (editingDimensionId) {
+      handleCancelEditing();
+    }
+    setPlacingDimensionId(null);
+    setPointCaptureState(null);
+    setDrawingSidebarView("dimensions");
+    const existingPagePointNames = activeDrawingDimensions
+      .filter(
+        (d) =>
+          getAnnotationKind(d) === "point" &&
+          getAnnotationPage(d) === currentPage,
+      )
+      .map((d) => d.name);
+    setPointEntrySession({
+      page: currentPage,
+      groupId: null,
+      pickMode: "x_zero",
+      nextId: resolveUniquePointIdOnPage("P1", existingPagePointNames),
+      calibration: createEmptyCalibration(),
+      placedCount: 0,
+    });
+  }, [
+    project,
+    activeDrawingId,
+    activeDrawingDimensions,
+    pointEntrySession,
+    editingDimensionId,
+    handleCancelEditing,
+    currentPage,
+  ]);
+
+  const handleResumePointEntryForGroup = useCallback(
+    (groupId: string) => {
+      if (!project || !activeDrawingId) return;
+      const group = (project.pointGroups ?? []).find((g) => g.id === groupId);
+      if (!group) return;
+      if (editingDimensionId) {
+        handleCancelEditing();
+      }
+      setPlacingDimensionId(null);
+      setPointCaptureState(null);
+      const byId = new Map(project.dimensions.map((d) => [d.id, d]));
+      const memberNames = group.pointIds
+        .map((pid) => byId.get(pid)?.name ?? "")
+        .filter(Boolean);
+      const existingPagePointNames = activeDrawingDimensions
+        .filter(
+          (d) =>
+            getAnnotationKind(d) === "point" &&
+            getAnnotationPage(d) === group.page,
+        )
+        .map((d) => d.name);
+      const cal = group.calibration
+        ? { ...group.calibration }
+        : createEmptyCalibration();
+      const hasCalibration =
+        cal.xZero !== null && cal.yZero !== null && cal.anchorX !== null;
+      setPointEntrySession({
+        page: group.page,
+        groupId: group.id,
+        pickMode: hasCalibration ? "place" : "x_zero",
+        nextId: resolveUniquePointIdOnPage(
+          suggestNextPointIdForGroup(memberNames),
+          existingPagePointNames,
+        ),
+        calibration: cal,
+        placedCount: 0,
+      });
+      if (group.page !== currentPage) {
+        setCurrentPage(group.page);
+        setScrollToPageRequest({ page: group.page, key: Date.now() });
+      }
+    },
+    [
+      project,
+      activeDrawingId,
+      activeDrawingDimensions,
+      editingDimensionId,
+      handleCancelEditing,
+      currentPage,
+    ],
+  );
+
+  const handleUpdatePointEntry = useCallback(
+    (patch: Partial<PointEntrySession>) => {
+      setPointEntrySession((prev) => (prev ? { ...prev, ...patch } : prev));
+    },
+    [],
+  );
+
+  const handleUpdatePointEntryCalibration = useCallback(
+    (patch: Partial<PointGroupCalibration>) => {
+      setPointEntrySession((prev) => {
+        if (!prev) return prev;
+        const nextCal = { ...prev.calibration, ...patch };
+        if (prev.groupId) {
+          const targetGroupId = prev.groupId;
+          setProject((proj) =>
+            proj
+              ? {
+                  ...proj,
+                  pointGroups: (proj.pointGroups ?? []).map((g) =>
+                    g.id === targetGroupId ? { ...g, calibration: nextCal } : g,
+                  ),
+                }
+              : proj,
+          );
+          markDirty();
+        }
+        return { ...prev, calibration: nextCal };
+      });
+    },
+    [markDirty],
+  );
+
+  const handleCopyPointEntryCalibration = useCallback(() => {
+    if (!pointEntrySession) return;
+    setCopiedPointCalibration({ ...pointEntrySession.calibration });
+    showStatus("info", "Copied coordinate definition");
+  }, [pointEntrySession, showStatus]);
+
+  const handlePastePointEntryCalibration = useCallback(() => {
+    if (!pointEntrySession || !copiedPointCalibration) return;
+    const cal = { ...copiedPointCalibration };
+    handleUpdatePointEntryCalibration(cal);
+    if (cal.xZero !== null && cal.yZero !== null && cal.anchorX !== null) {
+      setPointEntrySession((prev) =>
+        prev ? { ...prev, pickMode: "place" } : prev,
+      );
+    }
+    showStatus("info", "Pasted coordinate definition");
+  }, [
+    pointEntrySession,
+    copiedPointCalibration,
+    handleUpdatePointEntryCalibration,
+    showStatus,
+  ]);
+
+  const handleRecalculatePointGroupCoords = useCallback(async () => {
+    if (!project || !pointEntrySession || !pointEntrySession.groupId) return;
+    const group = (project.pointGroups ?? []).find(
+      (g) => g.id === pointEntrySession.groupId,
+    );
+    if (!group) return;
+
+    const pageAspect = pageAspectRatiosRef.current[group.page - 1];
+    const preview = recalculatePointGroupCoordinates(
+      project.dimensions,
+      group,
+      pointEntrySession.calibration,
+      pageAspect,
+    );
+    if (preview.updatedCount === 0) {
+      showStatus(
+        "error",
+        "No marked points in this group can be recalculated with the current calibration",
+      );
+      return;
+    }
+
+    const ok = await confirmAction(
+      `Regenerate X/Y coordinates for ${preview.updatedCount} point(s) in "${group.name}" using the current coordinate definition? Existing X/Y values in this group will be overwritten.`,
+      { title: "Regenerate Group Coordinates", kind: "warning" },
+    );
+    if (!ok) return;
+
+    const savedCal = { ...pointEntrySession.calibration };
+    setProject((prev) => {
+      if (!prev) return prev;
+      const liveGroup = (prev.pointGroups ?? []).find((g) => g.id === group.id);
+      if (!liveGroup) return prev;
+      const res = recalculatePointGroupCoordinates(
+        prev.dimensions,
+        liveGroup,
+        savedCal,
+        pageAspect,
+      );
+      return {
+        ...prev,
+        dimensions: res.updatedDimensions,
+        pointGroups: (prev.pointGroups ?? []).map((g) =>
+          g.id === liveGroup.id ? { ...g, calibration: savedCal } : g,
+        ),
+      };
+    });
+    markDirty();
+    showStatus(
+      "info",
+      `Regenerated X/Y coordinates for ${preview.updatedCount} point(s) in "${group.name}"`,
+    );
+  }, [project, pointEntrySession, markDirty, showStatus]);
+
+  const handlePointEntryClick = useCallback(
+    (page: number, clickX: number, clickY: number) => {
+      if (!pointEntrySession || !project || !activeDrawingId) return;
+      if (page !== pointEntrySession.page) return;
+
+      const { pickMode, calibration } = pointEntrySession;
+
+      if (pickMode === "x_zero") {
+        const nextCal: PointGroupCalibration = {
+          ...calibration,
+          xZero: clickX,
+        };
+        const nextMode =
+          nextCal.yZero === null
+            ? "y_zero"
+            : nextCal.anchorX === null
+              ? "anchor"
+              : "place";
+        handleUpdatePointEntryCalibration({ xZero: clickX });
+        setPointEntrySession((prev) =>
+          prev ? { ...prev, pickMode: nextMode } : prev,
+        );
+        return;
+      }
+
+      if (pickMode === "y_zero") {
+        const nextCal: PointGroupCalibration = {
+          ...calibration,
+          yZero: clickY,
+        };
+        const nextMode = nextCal.anchorX === null ? "anchor" : "place";
+        handleUpdatePointEntryCalibration({ yZero: clickY });
+        setPointEntrySession((prev) =>
+          prev ? { ...prev, pickMode: nextMode } : prev,
+        );
+        return;
+      }
+
+      if (pickMode === "anchor") {
+        const nextMode =
+          calibration.anchorValX.trim() && calibration.anchorValY.trim()
+            ? "place"
+            : "anchor";
+        handleUpdatePointEntryCalibration({
+          anchorX: clickX,
+          anchorY: clickY,
+        });
+        setPointEntrySession((prev) =>
+          prev ? { ...prev, pickMode: nextMode } : prev,
+        );
+        return;
+      }
+
+      // Place mode: enforce same-page Point ID uniqueness, then create a new Point with frozen calibrated X/Y
+      const desiredName = pointEntrySession.nextId.trim();
+      if (!desiredName) {
+        showStatus("error", "Point ID is required before placing a point");
+        return;
+      }
+      const existingPagePointNames = activeDrawingDimensions
+        .filter(
+          (d) =>
+            getAnnotationKind(d) === "point" && getAnnotationPage(d) === page,
+        )
+        .map((d) => d.name);
+      if (hasPointIdCollisionOnPage(desiredName, existingPagePointNames)) {
+        showStatus(
+          "error",
+          `Point ID "${desiredName}" already exists on Page ${page}`,
+        );
+        return;
+      }
+
+      const pageAspect = pageAspectRatiosRef.current[page - 1];
+      const { x, y } = computeCalibratedPointCoords(
+        clickX,
+        clickY,
+        calibration,
+        pageAspect,
+      );
+      const baseDim = createDimension(
+        activeDrawingDimensions,
+        activeDrawingId,
+        page,
+      );
+      const newPoint: Dimension = {
+        ...baseDim,
+        kind: "point",
+        name: desiredName,
+        dimensionType: "",
+        nominal: "",
+        upperTol: "",
+        lowerTol: "",
+        notes: "",
+        point: {
+          ...createDefaultPointSpec(),
+          x,
+          y,
+        },
+        marker: {
+          drawingId: activeDrawingId,
+          page,
+          x: clickX,
+          y: clickY,
+          width: 0,
+          height: 0,
+        },
+      };
+
+      const lastOnPageIdx = activeDrawingDimensions.reduce(
+        (acc, d, idx) => (getAnnotationPage(d) === page ? idx : acc),
+        -1,
+      );
+      const insertSlot =
+        lastOnPageIdx !== -1
+          ? lastOnPageIdx + 1
+          : activeDrawingDimensions.length;
+
+      let resolvedGroupId = pointEntrySession.groupId;
+      const savedCal = { ...calibration };
+
+      if (!resolvedGroupId) {
+        const createdGroup = {
+          ...createPointGroup([newPoint], activeDrawingId, page),
+          calibration: savedCal,
+        };
+        resolvedGroupId = createdGroup.id;
+        setProject((prev) =>
+          prev
+            ? {
+                ...prev,
+                dimensions: insertDimensionAtSlot(
+                  prev.dimensions,
+                  activeDrawingId,
+                  newPoint,
+                  insertSlot,
+                ),
+                pointGroups: [...(prev.pointGroups ?? []), createdGroup],
+              }
+            : prev,
+        );
+      } else {
+        const targetGroupId = resolvedGroupId;
+        setProject((prev) => {
+          if (!prev) return prev;
+          const nextDimensions = insertDimensionAtSlot(
+            prev.dimensions,
+            activeDrawingId,
+            newPoint,
+            insertSlot,
+          );
+          const byId = new Map(nextDimensions.map((d) => [d.id, d]));
+          const updatedGroups = addPointsToGroup(
+            prev.pointGroups ?? [],
+            targetGroupId,
+            [newPoint.id],
+            byId,
+          ).map((g) =>
+            g.id === targetGroupId ? { ...g, calibration: savedCal } : g,
+          );
+          return {
+            ...prev,
+            dimensions: nextDimensions,
+            pointGroups: updatedGroups,
+          };
+        });
+      }
+
+      setSelectedDimensionId(newPoint.id);
+      setSelectedDimensionIds([newPoint.id]);
+      const nextFreeId = resolveUniquePointIdOnPage(
+        incrementPointId(desiredName),
+        [...existingPagePointNames, desiredName],
+      );
+      setPointEntrySession((prev) =>
+        prev
+          ? {
+              ...prev,
+              groupId: resolvedGroupId,
+              nextId: nextFreeId,
+              placedCount: prev.placedCount + 1,
+            }
+          : prev,
+      );
+      markDirty();
+    },
+    [
+      pointEntrySession,
+      project,
+      activeDrawingId,
+      activeDrawingDimensions,
+      handleUpdatePointEntryCalibration,
+      markDirty,
+      showStatus,
+    ],
+  );
 
   const handleDuplicateDimension = useCallback(
     (sourceId: string) => {
       if (!project || !activeDrawingId) return;
-      const source = project.dimensions.find((d) => d.id === sourceId);
+      const sourceIdx = activeDrawingDimensions.findIndex(
+        (d) => d.id === sourceId,
+      );
+      const source = sourceIdx !== -1 ? activeDrawingDimensions[sourceIdx] : null;
       if (!source) return;
       if (editingDimensionId) {
         handleCancelEditing();
       }
       const dup = duplicateDimension(source, activeDrawingDimensions);
+      const insertSlot = sourceIdx + 1;
       editingOriginRef.current = { id: dup.id, isNew: true, snapshot: null };
       setProject((prev) =>
-        prev ? { ...prev, dimensions: [dup, ...prev.dimensions] } : prev,
+        prev
+          ? {
+              ...prev,
+              dimensions: insertDimensionAtSlot(
+                prev.dimensions,
+                activeDrawingId,
+                dup,
+                insertSlot,
+              ),
+            }
+          : prev,
       );
       setSelectedDimensionId(dup.id);
+      setSelectedDimensionIds([dup.id]);
       setEditingDimensionId(dup.id);
       setPlacingDimensionId(dup.id);
       setFocusNameKey((k) => k + 1);
+      setScrollSidebarRequest({ id: dup.id, key: Date.now() });
       markDirty();
     },
     [
@@ -881,6 +1709,71 @@ export default function App() {
       editingDimensionId,
       handleCancelEditing,
       markDirty,
+    ],
+  );
+
+  const handleDuplicateDimensions = useCallback(
+    (sourceIds: string[]) => {
+      if (!project || !activeDrawingId || sourceIds.length === 0) return;
+      if (sourceIds.length === 1) {
+        handleDuplicateDimension(sourceIds[0]);
+        return;
+      }
+      if (editingDimensionId) {
+        handleCancelEditing();
+      }
+      const idSet = new Set(sourceIds);
+      const sources: Dimension[] = [];
+      let lastSourceIdx = -1;
+      activeDrawingDimensions.forEach((d, idx) => {
+        if (idSet.has(d.id)) {
+          sources.push(d);
+          lastSourceIdx = idx;
+        }
+      });
+      if (sources.length === 0) return;
+
+      const dups = duplicateDimensionsBatch(sources, activeDrawingDimensions);
+      const insertSlot = lastSourceIdx + 1;
+      setProject((prev) =>
+        prev
+          ? {
+              ...prev,
+              dimensions: insertDimensionsAtSlot(
+                prev.dimensions,
+                activeDrawingId,
+                dups,
+                insertSlot,
+              ),
+            }
+          : prev,
+      );
+      setSelectedDimensionId(dups[0]?.id ?? null);
+      setEditingDimensionId(null);
+      setPlacingDimensionId(null);
+      if (dups[0]) {
+        setScrollSidebarRequest({ id: dups[0].id, key: Date.now() });
+      }
+      markDirty();
+      const namesPreview = dups
+        .map((d) => d.name.trim())
+        .filter(Boolean)
+        .slice(0, 5)
+        .join(", ");
+      showStatus(
+        "info",
+        `Duplicated ${dups.length} annotations${namesPreview ? ` (${namesPreview}${dups.length > 5 ? "…" : ""})` : ""}`,
+      );
+    },
+    [
+      project,
+      activeDrawingId,
+      activeDrawingDimensions,
+      editingDimensionId,
+      handleCancelEditing,
+      handleDuplicateDimension,
+      markDirty,
+      showStatus,
     ],
   );
 
@@ -947,10 +1840,57 @@ export default function App() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (editingDimensionId) {
+        if (pointEntrySession) {
+          e.preventDefault();
+          setPointEntrySession(null);
+        } else if (pointCaptureState) {
+          e.preventDefault();
+          setPointCaptureState(null);
+        } else if (editingDimensionId) {
           handleCancelEditing();
         } else if (placingDimensionId) {
           setPlacingDimensionId(null);
+        } else if (selectedDimensionId || selectedDimensionIds.length > 0) {
+          e.preventDefault();
+          clearSelection();
+        }
+      } else if (
+        (e.key === " " || e.code === "Space") &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.isComposing &&
+        pointCaptureState
+      ) {
+        const target = e.target as HTMLElement | null;
+        const tag = target?.tagName;
+        if (
+          tag !== "INPUT" &&
+          tag !== "TEXTAREA" &&
+          tag !== "SELECT" &&
+          !target?.isContentEditable
+        ) {
+          e.preventDefault();
+          advancePointCaptureStepRef.current();
+        }
+      } else if (
+        e.key === "Enter" &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.isComposing &&
+        pointCaptureState
+      ) {
+        const target = e.target as HTMLElement | null;
+        const tag = target?.tagName;
+        if (
+          tag !== "INPUT" &&
+          tag !== "TEXTAREA" &&
+          tag !== "SELECT" &&
+          !target?.isContentEditable
+        ) {
+          e.preventDefault();
+          void applyPointCaptureRef.current();
         }
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
         if (project) {
@@ -962,7 +1902,6 @@ export default function App() {
         !e.ctrlKey &&
         !e.altKey &&
         !e.isComposing &&
-        e.key.toLowerCase() === "n" &&
         activeModule === "drawing" &&
         drawingSidebarView === "dimensions" &&
         activeDrawingId !== null &&
@@ -978,8 +1917,62 @@ export default function App() {
         ) {
           return;
         }
-        e.preventDefault();
-        handleAddDimension();
+        if (e.key.toLowerCase() === "n") {
+          e.preventDefault();
+          handleAddDimension();
+        } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          const nextId = resolveAdjacentDimensionId(
+            activeDrawingDimensions,
+            selectedDimensionId,
+            e.key === "ArrowDown" ? "down" : "up",
+          );
+          if (!nextId) return;
+          e.preventDefault();
+          if (nextId === selectedDimensionId) return;
+          setSelectedDimensionId(nextId);
+          setSelectedDimensionIds([nextId]);
+          setScrollSidebarRequest({
+            id: nextId,
+            key: Date.now(),
+            block: "nearest",
+          });
+          const nextDim = activeDrawingDimensions.find((d) => d.id === nextId);
+          if (nextDim?.marker) {
+            const byId = new Map(activeDrawingDimensions.map((d) => [d.id, d]));
+            const targetPage = nextDim.marker.page;
+            const relatedMarkers: MarkerPosition[] = [];
+            for (const pid of nextDim.linkedPointIds ?? []) {
+              const pt = byId.get(pid);
+              if (pt?.marker && pt.marker.page === targetPage) {
+                relatedMarkers.push(pt.marker);
+              }
+            }
+            for (const nid of nextDim.linkedNoteIds ?? []) {
+              const nt = byId.get(nid);
+              if (nt?.marker && nt.marker.page === targetPage) {
+                relatedMarkers.push(nt.marker);
+              }
+            }
+            const union = computeHighlightUnionRegion(
+              nextDim.marker,
+              relatedMarkers,
+            );
+            suppressPdfToSidebarSyncUntilRef.current = performance.now() + 750;
+            setCurrentPage(targetPage);
+            setScrollToPageRequest({
+              page: targetPage,
+              marker: {
+                drawingId: nextDim.marker.drawingId,
+                page: targetPage,
+                x: union.x,
+                y: union.y,
+                width: union.width,
+                height: union.height,
+              },
+              key: Date.now(),
+            });
+          }
+        }
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -988,32 +1981,149 @@ export default function App() {
     activeModule,
     drawingSidebarView,
     activeDrawingId,
+    activeDrawingDimensions,
+    selectedDimensionId,
+    selectedDimensionIds,
     editingDimensionId,
     placingDimensionId,
+    pointCaptureState,
+    pointEntrySession,
     project,
+    clearSelection,
     handleAddDimension,
     handleCancelEditing,
     persistProject,
   ]);
 
-  const handleSelectFromSidebar = useCallback(
-    (id: string) => {
-      setSelectedDimensionId(id);
-      const dim = activeDrawingDimensions.find((d) => d.id === id);
-      if (dim?.marker) {
-        setCurrentPage(dim.marker.page);
-        setScrollToPageRequest({
-          page: dim.marker.page,
-          marker: dim.marker,
-          key: Date.now(),
-        });
+  const buildHighlightScrollRequest = useCallback(
+    (primaryDim: Dimension, extraIds?: readonly string[]) => {
+      if (!primaryDim.marker) return null;
+      const targetPage = primaryDim.marker.page;
+      const byId = new Map(activeDrawingDimensions.map((d) => [d.id, d]));
+      const relatedMarkers: MarkerPosition[] = [];
+
+      const collectLinked = (dim: Dimension) => {
+        for (const pid of dim.linkedPointIds ?? []) {
+          const pt = byId.get(pid);
+          if (pt?.marker && pt.marker.page === targetPage) {
+            relatedMarkers.push(pt.marker);
+          }
+        }
+        for (const nid of dim.linkedNoteIds ?? []) {
+          const nt = byId.get(nid);
+          if (nt?.marker && nt.marker.page === targetPage) {
+            relatedMarkers.push(nt.marker);
+          }
+        }
+      };
+
+      collectLinked(primaryDim);
+      if (extraIds) {
+        for (const id of extraIds) {
+          if (id === primaryDim.id) continue;
+          const other = byId.get(id);
+          if (other?.marker && other.marker.page === targetPage) {
+            relatedMarkers.push(other.marker);
+            collectLinked(other);
+          }
+        }
       }
+
+      const union = computeHighlightUnionRegion(
+        primaryDim.marker,
+        relatedMarkers,
+      );
+      return {
+        page: targetPage,
+        marker: {
+          drawingId: primaryDim.marker.drawingId,
+          page: targetPage,
+          x: union.x,
+          y: union.y,
+          width: union.width,
+          height: union.height,
+        },
+        key: Date.now(),
+      };
     },
     [activeDrawingDimensions],
   );
 
-  const handleSelectFromDrawing = useCallback((id: string) => {
-    setSelectedDimensionId(id);
+  const handleSelectFromSidebar = useCallback(
+    (id: string) => {
+      setSelectedDimensionId(id);
+      setSelectedDimensionIds([id]);
+      const dim = activeDrawingDimensions.find((d) => d.id === id);
+      if (dim?.marker) {
+        const req = buildHighlightScrollRequest(dim);
+        if (req) {
+          suppressPdfToSidebarSyncUntilRef.current = performance.now() + 750;
+          setCurrentPage(req.page);
+          setScrollToPageRequest(req);
+        }
+      }
+    },
+    [activeDrawingDimensions, buildHighlightScrollRequest],
+  );
+
+  const handleSelectMultiFromSidebar = useCallback(
+    (ids: string[], primaryId: string) => {
+      setSelectedDimensionIds(ids);
+      setSelectedDimensionId(primaryId || null);
+      if (!primaryId) return;
+      const dim = activeDrawingDimensions.find((d) => d.id === primaryId);
+      if (dim?.marker) {
+        const req = buildHighlightScrollRequest(dim, ids);
+        if (req) {
+          suppressPdfToSidebarSyncUntilRef.current = performance.now() + 750;
+          setCurrentPage(req.page);
+          setScrollToPageRequest(req);
+        }
+      }
+    },
+    [activeDrawingDimensions, buildHighlightScrollRequest],
+  );
+
+  const handleSelectFromDrawing = useCallback(
+    (id: string, additive = false) => {
+      setDrawingSidebarView("dimensions");
+      if (additive) {
+        setSelectedDimensionIds((prev) => {
+          const base =
+            prev.length > 0
+              ? prev
+              : selectedDimensionId
+                ? [selectedDimensionId]
+                : [];
+          const next = base.includes(id)
+            ? base.filter((existingId) => existingId !== id)
+            : [...base, id];
+          setSelectedDimensionId(
+            next.includes(id) ? id : (next[next.length - 1] ?? null),
+          );
+          return next;
+        });
+        return;
+      }
+      setSelectedDimensionId(id);
+      setSelectedDimensionIds([id]);
+      const dim = activeDrawingDimensions.find((d) => d.id === id);
+      if (dim?.marker) {
+        setCurrentPage(dim.marker.page);
+      }
+      setScrollSidebarRequest({ id, key: Date.now() });
+    },
+    [activeDrawingDimensions, selectedDimensionId],
+  );
+
+  const handleJumpToPage = useCallback((page: number) => {
+    setCurrentPage(page);
+    setScrollToPageRequest({ page, key: Date.now() });
+  }, []);
+
+  // Decoupled PDF scroll: only updates the active page indicator (never yanks the annotations list)
+  const handlePdfPageChange = useCallback((page: number) => {
+    setCurrentPage(page);
   }, []);
 
   const handleUpdateDimension = useCallback(
@@ -1027,9 +2137,12 @@ export default function App() {
           ),
         };
       });
+      if (patch.kind !== undefined && id === editingDimensionId) {
+        setScrollSidebarRequest({ id, key: Date.now(), block: "start" });
+      }
       markDirty();
     },
-    [markDirty],
+    [editingDimensionId, markDirty],
   );
 
   const handleDeleteDimension = useCallback(
@@ -1046,24 +2159,26 @@ export default function App() {
 
       setProject((prev) => {
         if (!prev) return prev;
+        const nextDimensions = prev.dimensions
+          .filter((d) => d.id !== id)
+          .map((d) => {
+            const hasPoint = d.linkedPointIds?.includes(id) ?? false;
+            const hasNote = d.linkedNoteIds?.includes(id) ?? false;
+            if (!hasPoint && !hasNote) return d;
+            return {
+              ...d,
+              linkedPointIds: hasPoint
+                ? d.linkedPointIds!.filter((pid) => pid !== id)
+                : d.linkedPointIds,
+              linkedNoteIds: hasNote
+                ? d.linkedNoteIds!.filter((nid) => nid !== id)
+                : d.linkedNoteIds,
+            };
+          });
         return {
           ...prev,
-          dimensions: prev.dimensions
-            .filter((d) => d.id !== id)
-            .map((d) => {
-              const hasPoint = d.linkedPointIds?.includes(id) ?? false;
-              const hasNote = d.linkedNoteIds?.includes(id) ?? false;
-              if (!hasPoint && !hasNote) return d;
-              return {
-                ...d,
-                linkedPointIds: hasPoint
-                  ? d.linkedPointIds!.filter((pid) => pid !== id)
-                  : d.linkedPointIds,
-                linkedNoteIds: hasNote
-                  ? d.linkedNoteIds!.filter((nid) => nid !== id)
-                  : d.linkedNoteIds,
-              };
-            }),
+          dimensions: nextDimensions,
+          pointGroups: prunePointGroups(prev.pointGroups ?? [], nextDimensions),
         };
       });
       setSelectedDimensionId((prev) => (prev === id ? null : prev));
@@ -1082,22 +2197,21 @@ export default function App() {
           ...prev,
           dimensions: prev.dimensions.map((d) =>
             d.id === dimensionId
-              ? { ...d, drawingId: marker.drawingId, marker }
+              ? {
+                  ...d,
+                  drawingId: marker.drawingId,
+                  page: marker.page,
+                  marker,
+                }
               : d,
           ),
         };
       });
       setPlacingDimensionId(null);
       setSelectedDimensionId(dimensionId);
-      if (
-        editingDimensionId === dimensionId &&
-        document.activeElement?.tagName !== "INPUT"
-      ) {
-        setFocusNameKey((k) => k + 1);
-      }
       markDirty();
     },
-    [editingDimensionId, markDirty],
+    [markDirty],
   );
 
   const handleMoveMarker = useCallback(
@@ -1124,6 +2238,25 @@ export default function App() {
     [markDirty],
   );
 
+  const handleBatchMoveMarkers = useCallback(
+    (updates: Array<{ id: string; marker: MarkerPosition }>) => {
+      if (updates.length === 0) return;
+      const byId = new Map(updates.map((u) => [u.id, u.marker]));
+      setProject((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          dimensions: prev.dimensions.map((d) => {
+            const nextMarker = byId.get(d.id);
+            return nextMarker ? { ...d, marker: nextMarker } : d;
+          }),
+        };
+      });
+      markDirty();
+    },
+    [markDirty],
+  );
+
   const handleClearMarker = useCallback(
     (dimensionId: string) => {
       setProject((prev) => {
@@ -1138,6 +2271,376 @@ export default function App() {
       markDirty();
     },
     [markDirty],
+  );
+
+  const handleApplyPointCapture = useCallback(async () => {
+    if (!pointCaptureState || !project || !pdfBytes || !activeDrawingId) return;
+    const dim = project.dimensions.find(
+      (d) => d.id === pointCaptureState.dimensionId,
+    );
+    if (!dim || !dim.marker) {
+      setPointCaptureState(null);
+      return;
+    }
+    const entries = Object.entries(pointCaptureState.boxes) as Array<
+      [
+        PointCaptureField,
+        { page: number; x: number; y: number; width: number; height: number },
+      ]
+    >;
+    if (entries.length === 0) {
+      setPointCaptureState(null);
+      return;
+    }
+    try {
+      const capturedTexts: Partial<Record<PointCaptureField, string[]>> = {};
+      await Promise.all(
+        entries.map(async ([field, box]) => {
+          capturedTexts[field] = await extractTextLinesInMarker(pdfBytes, {
+            drawingId: activeDrawingId,
+            page: box.page,
+            x: box.x,
+            y: box.y,
+            width: box.width,
+            height: box.height,
+          });
+        }),
+      );
+      const patch = parsePointFromFieldCaptures(capturedTexts, dim.point);
+      setPointCaptureState(null);
+      if (!patch) {
+        showStatus(
+          "info",
+          "Could not recognize Point ID or coordinates from selected regions",
+        );
+        return;
+      }
+      handleUpdateDimension(dim.id, patch);
+      const parts: string[] = [];
+      if (patch.name) parts.push(patch.name);
+      if (patch.point?.x) parts.push(`X:${patch.point.x}`);
+      if (patch.point?.y) parts.push(`Y:${patch.point.y}`);
+      if (patch.point?.z) parts.push(`Z:${patch.point.z}`);
+      showStatus(
+        "info",
+        `Auto-filled Point${parts.length > 0 ? ` (${parts.join(" ")})` : ""}`,
+      );
+    } catch (err) {
+      setPointCaptureState(null);
+      showStatus("error", err instanceof Error ? err.message : String(err));
+    }
+  }, [
+    pointCaptureState,
+    project,
+    pdfBytes,
+    activeDrawingId,
+    handleUpdateDimension,
+    showStatus,
+  ]);
+  applyPointCaptureRef.current = handleApplyPointCapture;
+
+  const handleAdvancePointCaptureStep = useCallback(() => {
+    if (!pointCaptureState) return;
+    if (pointCaptureState.stepIndex >= POINT_CAPTURE_STEPS.length - 1) {
+      void handleApplyPointCapture();
+      return;
+    }
+    setPointCaptureState((prev) =>
+      prev ? { ...prev, stepIndex: prev.stepIndex + 1 } : prev,
+    );
+  }, [pointCaptureState, handleApplyPointCapture]);
+  advancePointCaptureStepRef.current = handleAdvancePointCaptureStep;
+
+  const handleAddPointCaptureRegion = useCallback(
+    (rect: {
+      page: number;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }) => {
+      setPointCaptureState((prev) => {
+        if (!prev) return prev;
+        const field = POINT_CAPTURE_STEPS[prev.stepIndex];
+        return {
+          ...prev,
+          boxes: {
+            ...prev.boxes,
+            [field]: rect,
+          },
+        };
+      });
+    },
+    [],
+  );
+
+  const handleCancelPointCapture = useCallback(() => {
+    setPointCaptureState(null);
+  }, []);
+
+  const handleAutoRecognizeDimension = useCallback(
+    async (dimensionId: string) => {
+      if (!project || !pdfBytes) return;
+      const dim = project.dimensions.find((d) => d.id === dimensionId);
+      if (!dim || !dim.marker) return;
+      const kind = getAnnotationKind(dim);
+      if (kind === "point") {
+        if (pointCaptureState && pointCaptureState.dimensionId === dimensionId) {
+          await handleApplyPointCapture();
+          return;
+        }
+        setPlacingDimensionId(null);
+        setPointCaptureState({
+          dimensionId,
+          page: dim.marker.page,
+          stepIndex: 0,
+          boxes: {},
+        });
+        return;
+      }
+
+      try {
+        const lines = await extractTextLinesInMarker(pdfBytes, dim.marker);
+        if (lines.length === 0) {
+          showStatus("info", "No selectable text found in the marked area");
+          return;
+        }
+        const patch = parseAnnotationFromRegionText(kind, lines, dim);
+        if (!patch || Object.keys(patch).length === 0) {
+          showStatus("info", "Could not parse fields from marked area text");
+          return;
+        }
+        handleUpdateDimension(dimensionId, patch);
+        showStatus("info", "Auto-filled fields from marked area");
+      } catch (err) {
+        showStatus("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [
+      project,
+      pdfBytes,
+      pointCaptureState,
+      handleApplyPointCapture,
+      handleUpdateDimension,
+      showStatus,
+    ],
+  );
+
+  const handleReplaceDrawingDimensions = useCallback(
+    (
+      nextDrawingDimensions: Dimension[],
+      nextDrawingPointGroups?: PointGroup[],
+    ) => {
+      if (!activeDrawingId) return;
+      setProject((prev) => {
+        if (!prev) return prev;
+        const nextAll = rebindSamePageLinkedPoints(
+          replaceDrawingDimensionsOrder(
+            prev.dimensions,
+            activeDrawingId,
+            nextDrawingDimensions,
+          ),
+        );
+        const mergedGroups = nextDrawingPointGroups
+          ? [
+              ...(prev.pointGroups ?? []).filter(
+                (g) => g.drawingId !== activeDrawingId,
+              ),
+              ...nextDrawingPointGroups,
+            ]
+          : (prev.pointGroups ?? []);
+        return {
+          ...prev,
+          dimensions: nextAll,
+          pointGroups: prunePointGroups(mergedGroups, nextAll),
+        };
+      });
+      markDirty();
+    },
+    [activeDrawingId, markDirty],
+  );
+
+  const handleInsertAnnotationRows = useCallback(
+    (
+      kind: AnnotationKind,
+      anchorId: string,
+      position: "above" | "below",
+      count: number,
+    ) => {
+      if (!project || !activeDrawingId || count < 1) return;
+      const anchorIdx = activeDrawingDimensions.findIndex(
+        (d) => d.id === anchorId,
+      );
+      if (anchorIdx === -1) return;
+      const insertSlot = position === "above" ? anchorIdx : anchorIdx + 1;
+
+      const working = [...activeDrawingDimensions];
+      const created: Dimension[] = [];
+      for (let i = 0; i < count; i++) {
+        const base = createDimension(working, activeDrawingId, null);
+        let nextDim: Dimension = {
+          ...base,
+          kind,
+          name: "",
+          page: null,
+          quantity: 0,
+          unit: "",
+        };
+        if (kind === "gdt") {
+          nextDim = { ...nextDim, gdt: createDefaultGdtSpec() };
+        } else if (kind === "point") {
+          nextDim = {
+            ...nextDim,
+            point: createDefaultPointSpec(),
+          };
+        }
+        working.push(nextDim);
+        created.push(nextDim);
+      }
+
+      setProject((prev) =>
+        prev
+          ? {
+              ...prev,
+              dimensions: insertDimensionsAtSlot(
+                prev.dimensions,
+                activeDrawingId,
+                created,
+                insertSlot,
+              ),
+            }
+          : prev,
+      );
+      markDirty();
+    },
+    [project, activeDrawingId, activeDrawingDimensions, currentPage, markDirty],
+  );
+
+  const handleAddAnnotationRow = useCallback(
+    (kind: AnnotationKind) => {
+      if (!project || !activeDrawingId) return;
+      const base = createDimension(
+        activeDrawingDimensions,
+        activeDrawingId,
+        null,
+      );
+      let nextDim: Dimension = {
+        ...base,
+        kind,
+        name: "",
+        page: null,
+        quantity: 0,
+        unit: "",
+      };
+      if (kind === "gdt") {
+        nextDim = { ...nextDim, gdt: createDefaultGdtSpec() };
+      } else if (kind === "point") {
+        nextDim = {
+          ...nextDim,
+          point: createDefaultPointSpec(),
+        };
+      }
+      setProject((prev) =>
+        prev
+          ? {
+              ...prev,
+              dimensions: [...prev.dimensions, nextDim],
+            }
+          : prev,
+      );
+      markDirty();
+    },
+    [project, activeDrawingId, activeDrawingDimensions, markDirty],
+  );
+
+  const handleDeleteDimensionsBatch = useCallback(
+    async (ids: string[]) => {
+      if (!project || ids.length === 0) return;
+      const ok = await confirmAction(
+        ids.length === 1
+          ? "Delete this annotation?"
+          : `Delete ${ids.length} selected annotations?`,
+        { title: "Delete Annotations", kind: "warning" },
+      );
+      if (!ok) return;
+      const removeSet = new Set(ids);
+      setProject((prev) => {
+        if (!prev) return prev;
+        const remaining = prev.dimensions
+          .filter((d) => !removeSet.has(d.id))
+          .map((d) => {
+            const nextLinkedPoints = d.linkedPointIds?.filter(
+              (pid) => !removeSet.has(pid),
+            );
+            const nextLinkedNotes = d.linkedNoteIds?.filter(
+              (nid) => !removeSet.has(nid),
+            );
+            const pointsChanged =
+              (d.linkedPointIds?.length ?? 0) !== (nextLinkedPoints?.length ?? 0);
+            const notesChanged =
+              (d.linkedNoteIds?.length ?? 0) !== (nextLinkedNotes?.length ?? 0);
+            if (!pointsChanged && !notesChanged) return d;
+            return {
+              ...d,
+              linkedPointIds: nextLinkedPoints,
+              linkedNoteIds: nextLinkedNotes,
+            };
+          });
+        return {
+          ...prev,
+          dimensions: remaining,
+          pointGroups: prunePointGroups(prev.pointGroups ?? [], remaining),
+        };
+      });
+      if (selectedDimensionId && removeSet.has(selectedDimensionId)) {
+        setSelectedDimensionId(null);
+      }
+      setSelectedDimensionIds((prev) => prev.filter((id) => !removeSet.has(id)));
+      markDirty();
+    },
+    [project, selectedDimensionId, markDirty],
+  );
+
+  const handleSwitchDrawingInAnnotations = useCallback(
+    async (drawingId: string) => {
+      if (!project) return;
+      const ownerPart = project.parts.find((p) =>
+        p.drawingIds.includes(drawingId),
+      );
+      if (ownerPart) {
+        setActivePartId(ownerPart.id);
+        setSelectedPartId(ownerPart.id);
+      }
+      try {
+        if (drawingId !== activeDrawingId || !pdfBytes) {
+          const seq = ++drawingLoadSeqRef.current;
+          const bytes = await getDrawingBytes(drawingId);
+          if (drawingLoadSeqRef.current !== seq) return;
+          setActiveDrawingId(drawingId);
+          setPdfBytes(bytes);
+          setCurrentPage(1);
+          setSelectedDimensionId(null);
+          setPlacingDimensionId(null);
+        }
+      } catch (err) {
+        showStatus("error", err instanceof Error ? err.message : String(err));
+      }
+    },
+    [project, activeDrawingId, pdfBytes, showStatus],
+  );
+
+  const handleLocateAnnotationOnDrawing = useCallback(
+    (dimensionId: string) => {
+      setDrawingSidebarView("dimensions");
+      setActiveModule("drawing");
+      handleSelectFromSidebar(dimensionId);
+      setScrollSidebarRequest({
+        id: dimensionId,
+        key: Date.now(),
+        block: "center",
+      });
+    },
+    [handleSelectFromSidebar],
   );
 
   return (
@@ -1188,6 +2691,7 @@ export default function App() {
           activeModule={activeModule}
           onSelectModule={handleSelectModule}
           hasActiveDrawing={activeDrawingId !== null}
+          hasAnnotations={activeDrawingDimensions.length > 0}
         />
 
         {!project ? (
@@ -1234,33 +2738,93 @@ export default function App() {
               }
             />
           </main>
-        ) : activeModule === "project" ? (
-          <ProjectWorkspace
-            project={project}
-            selectedPartId={selectedPartId}
-            activePartId={activePartId}
-            onSelectPart={setSelectedPartId}
-            onActivatePart={(id) => void handleActivatePart(id)}
-            onRenameProject={handleRenameProject}
-            onAddPart={handleAddPart}
-            onUpdatePart={handleUpdatePart}
-            onReparentPart={handleReparentPart}
-            onDeletePart={(id) => void handleDeletePart(id)}
-            onAttachPdf={(id) => void handleAttachPdf(id)}
-            onDetachPdf={(partId, drwId) => void handleDetachPdf(partId, drwId)}
-            onOpenDrawing={(drwId) => void handleOpenDrawing(drwId)}
-          />
         ) : (
-          <div className="flex min-h-0 min-w-0 flex-1">
-            <aside className="flex w-80 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950">
-              {drawingSidebarView === "dimensions" && activeDrawing ? (
-                <DimensionSidebar
-                  dimensions={activeDrawingDimensions}
+          <>
+            <div
+              className={
+                activeModule === "project"
+                  ? "flex min-h-0 min-w-0 flex-1"
+                  : "hidden"
+              }
+            >
+              <ProjectWorkspace
+                project={project}
+                selectedPartId={selectedPartId}
+                activePartId={activePartId}
+                onSelectPart={setSelectedPartId}
+                onActivatePart={(id) => void handleActivatePart(id)}
+                onRenameProject={handleRenameProject}
+                onAddPart={handleAddPart}
+                onUpdatePart={handleUpdatePart}
+                onReparentPart={handleReparentPart}
+                onDeletePart={(id) => void handleDeletePart(id)}
+                onAttachPdf={(id) => void handleAttachPdf(id)}
+                onDetachPdf={(partId, drwId) =>
+                  void handleDetachPdf(partId, drwId)
+                }
+                onOpenDrawing={(drwId) => void handleOpenDrawing(drwId)}
+              />
+            </div>
+
+            <div
+              className={
+                activeModule === "annotations"
+                  ? "flex min-h-0 min-w-0 flex-1"
+                  : "hidden"
+              }
+            >
+              <AnnotationsWorkspace
+                isActive={activeModule === "annotations"}
+                activeDrawing={activeDrawing}
+                drawingOptions={drawingSwitchOptions}
+                dimensions={activeDrawingDimensions}
+                pointGroups={activeDrawingPointGroups}
+                onSwitchDrawing={(drwId) =>
+                  void handleSwitchDrawingInAnnotations(drwId)
+                }
+                onGoToProject={() => setActiveModule("project")}
+                onReplaceDrawingDimensions={handleReplaceDrawingDimensions}
+                onAddAnnotationRow={handleAddAnnotationRow}
+                onInsertAnnotationRows={handleInsertAnnotationRows}
+                onDuplicateRows={handleDuplicateDimensions}
+                onDeleteRows={(ids) => void handleDeleteDimensionsBatch(ids)}
+                onLocateOnDrawing={handleLocateAnnotationOnDrawing}
+                onNotify={showStatus}
+              />
+            </div>
+
+            <div
+              className={
+                activeModule === "drawing"
+                  ? "flex min-h-0 min-w-0 flex-1"
+                  : "hidden"
+              }
+            >
+              <aside
+                className={`flex shrink-0 flex-col border-r border-neutral-800 bg-neutral-950 ${
+                  drawingSidebarView === "dimensions" && activeDrawing
+                    ? "w-[356px]"
+                    : "w-80"
+                }`}
+              >
+                {drawingSidebarView === "dimensions" && activeDrawing ? (
+                  <DimensionSidebar
+                    isActive={activeModule === "drawing"}
+                    dimensions={activeDrawingDimensions}
+                  pointGroups={activeDrawingPointGroups}
                   selectedDimensionId={selectedDimensionId}
+                  selectedDimensionIds={selectedDimensionIds}
                   editingDimensionId={editingDimensionId}
                   placingDimensionId={placingDimensionId}
+                  pointCaptureDimensionId={
+                    pointCaptureState?.dimensionId ?? null
+                  }
                   focusNameKey={focusNameKey}
                   hasProject={activeDrawingId !== null}
+                  currentPage={currentPage}
+                  pageCount={pageCount}
+                  scrollToDimensionRequest={scrollSidebarRequest}
+                  onJumpToPage={handleJumpToPage}
                   activeDrawingFilename={
                     activeDrawing.version?.trim()
                       ? `Version: ${activeDrawing.version.trim()}`
@@ -1273,15 +2837,28 @@ export default function App() {
                     setDrawingSidebarView("drawings");
                   }}
                   onAddDimension={handleAddDimension}
+                  onSortDimensions={handleSortDimensions}
+                  onReorderDimensions={handleReorderDimensions}
                   onSelectDimension={handleSelectFromSidebar}
+                  onSelectDimensions={handleSelectMultiFromSidebar}
                   onStartEditing={handleStartEditing}
                   onFinishEditing={handleFinishEditing}
                   onCancelEditing={handleCancelEditing}
                   onUpdateDimension={handleUpdateDimension}
                   onDuplicateDimension={handleDuplicateDimension}
+                  onDuplicateDimensions={handleDuplicateDimensions}
+                  onCreatePointGroup={handleCreatePointGroup}
+                  onRenamePointGroup={handleRenamePointGroup}
+                  onTogglePointGroupCollapsed={handleTogglePointGroupCollapsed}
+                  onSetAllPointGroupsCollapsed={handleSetAllPointGroupsCollapsed}
+                  onDeletePointGroup={(id) => void handleDeletePointGroup(id)}
+                  onResumePointEntryForGroup={handleResumePointEntryForGroup}
+                  onAddPointsToGroup={handleAddPointsToGroup}
+                  onRemovePointsFromGroups={handleRemovePointsFromGroups}
                   onDeleteDimension={(id) => void handleDeleteDimension(id)}
                   onStartPlacing={setPlacingDimensionId}
                   onClearMarker={handleClearMarker}
+                  onAutoRecognizeDimension={handleAutoRecognizeDimension}
                 />
               ) : (
                 <DrawingListSidebar
@@ -1308,6 +2885,7 @@ export default function App() {
 
             {activeDrawing && pdfBytes ? (
               <PdfViewer
+                isActive={activeModule === "drawing"}
                 pdfBytes={pdfBytes}
                 drawingId={activeDrawing.id}
                 drawingFilename={activeDrawing.filename}
@@ -1320,15 +2898,64 @@ export default function App() {
                 scrollToPageRequest={scrollToPageRequest}
                 dimensions={activeDrawingDimensions}
                 selectedDimensionId={selectedDimensionId}
+                selectedDimensionIds={selectedDimensionIds}
                 editingDimensionId={editingDimensionId}
                 placingDimensionId={placingDimensionId}
+                pointCapturePage={pointCaptureState?.page ?? null}
+                pointCaptureStep={
+                  pointCaptureState
+                    ? POINT_CAPTURE_STEPS[pointCaptureState.stepIndex]
+                    : null
+                }
+                pointCaptureRegions={
+                  pointCaptureState
+                    ? (
+                        Object.entries(pointCaptureState.boxes) as Array<
+                          [
+                            PointCaptureField,
+                            {
+                              page: number;
+                              x: number;
+                              y: number;
+                              width: number;
+                              height: number;
+                            },
+                          ]
+                        >
+                      ).map(([field, box]) => ({
+                        field,
+                        label: field.toUpperCase(),
+                        ...box,
+                      }))
+                    : []
+                }
                 onPageCountLoaded={handlePageCountLoaded}
-                onPageChange={setCurrentPage}
+                onPageChange={handlePdfPageChange}
                 onZoomChange={setZoom}
                 onFitToView={() => setFitRequestKey((k) => k + 1)}
                 onPlaceMarker={handlePlaceMarker}
+                onAddPointCaptureRegion={handleAddPointCaptureRegion}
+                onAdvancePointCaptureStep={handleAdvancePointCaptureStep}
+                onApplyPointCapture={() => void handleApplyPointCapture()}
+                onCancelPointCapture={handleCancelPointCapture}
+                pointEntrySession={pointEntrySession}
+                onTogglePointEntry={handleTogglePointEntry}
+                onUpdatePointEntry={handleUpdatePointEntry}
+                onUpdatePointEntryCalibration={
+                  handleUpdatePointEntryCalibration
+                }
+                hasCopiedPointEntryCalibration={copiedPointCalibration !== null}
+                onCopyPointEntryCalibration={handleCopyPointEntryCalibration}
+                onPastePointEntryCalibration={handlePastePointEntryCalibration}
+                onRecalculatePointGroupCoords={() =>
+                  void handleRecalculatePointGroupCoords()
+                }
+                onPointEntryClick={handlePointEntryClick}
+                onClosePointEntry={() => setPointEntrySession(null)}
                 onSelectDimension={handleSelectFromDrawing}
+                onClearSelection={clearSelection}
                 onMoveMarker={handleMoveMarker}
+                onBatchMoveMarkers={handleBatchMoveMarkers}
                 onCancelPlacing={() => setPlacingDimensionId(null)}
               />
             ) : (
@@ -1386,6 +3013,7 @@ export default function App() {
               </main>
             )}
           </div>
+          </>
         )}
       </div>
     </div>

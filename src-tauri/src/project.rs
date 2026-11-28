@@ -83,6 +83,8 @@ pub struct Dimension {
     pub id: String,
     #[serde(default)]
     pub drawing_id: Option<String>,
+    #[serde(default)]
+    pub page: Option<u32>,
     #[serde(default = "default_annotation_kind")]
     pub kind: String,
     #[serde(default)]
@@ -139,6 +141,38 @@ pub struct DrawingEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct PointGroupCalibration {
+    #[serde(default)]
+    pub x_zero: Option<f64>,
+    #[serde(default)]
+    pub y_zero: Option<f64>,
+    #[serde(default)]
+    pub anchor_x: Option<f64>,
+    #[serde(default)]
+    pub anchor_y: Option<f64>,
+    #[serde(default)]
+    pub anchor_val_x: String,
+    #[serde(default)]
+    pub anchor_val_y: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PointGroup {
+    pub id: String,
+    pub drawing_id: String,
+    pub page: u32,
+    pub name: String,
+    #[serde(default)]
+    pub point_ids: Vec<String>,
+    #[serde(default)]
+    pub collapsed: bool,
+    #[serde(default)]
+    pub calibration: Option<PointGroupCalibration>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectData {
     pub schema_version: u32,
     pub project_id: String,
@@ -149,6 +183,8 @@ pub struct ProjectData {
     pub parts: Vec<Part>,
     pub drawings: Vec<DrawingEntry>,
     pub dimensions: Vec<Dimension>,
+    #[serde(default)]
+    pub point_groups: Vec<PointGroup>,
 }
 
 #[derive(Default)]
@@ -495,6 +531,7 @@ mod tests {
                 Dimension {
                     id: "dim-1".to_string(),
                     drawing_id: Some("drw-1".to_string()),
+                    page: Some(1),
                     kind: "linear".to_string(),
                     balloon_number: 1,
                     dimension_type: "CTF".to_string(),
@@ -521,6 +558,7 @@ mod tests {
                 Dimension {
                     id: "dim-2".to_string(),
                     drawing_id: Some("drw-2".to_string()),
+                    page: None,
                     kind: "gdt".to_string(),
                     balloon_number: 1,
                     dimension_type: "CTQ".to_string(),
@@ -553,6 +591,22 @@ mod tests {
                     marker: None,
                 },
             ],
+            point_groups: vec![PointGroup {
+                id: "grp-1".to_string(),
+                drawing_id: "drw-1".to_string(),
+                page: 1,
+                name: "F1~F3".to_string(),
+                point_ids: vec!["pt-1".to_string(), "pt-2".to_string(), "pt-3".to_string()],
+                collapsed: true,
+                calibration: Some(PointGroupCalibration {
+                    x_zero: Some(0.2),
+                    y_zero: Some(0.8),
+                    anchor_x: Some(0.7),
+                    anchor_y: Some(0.3),
+                    anchor_val_x: "100".to_string(),
+                    anchor_val_y: "50".to_string(),
+                }),
+            }],
         };
         (project, map)
     }
@@ -588,6 +642,7 @@ mod tests {
             }],
             drawings: vec![],
             dimensions: vec![],
+            point_groups: vec![],
         };
         let empty_map = HashMap::new();
         write_qone_atomic(&empty_path, &empty_project, &empty_map).unwrap();

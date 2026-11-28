@@ -1,8 +1,14 @@
-export type DimensionUnit = "mm" | "in" | "deg";
+export type DimensionUnit = "" | "mm" | "in" | "deg";
 
-export type ActiveModule = "project" | "drawing";
+export type ActiveModule = "project" | "drawing" | "annotations";
 
-export type AnnotationKind = "linear" | "gdt" | "note" | "datum" | "point";
+export type AnnotationKind =
+  | "linear"
+  | "gdt"
+  | "non_dimensional"
+  | "note"
+  | "datum"
+  | "point";
 
 export type GdtSymbol =
   | "flatness"
@@ -54,6 +60,8 @@ export interface MarkerPosition {
 export interface Dimension {
   id: string;
   drawingId: string | null;
+  /** Target/owning page for this annotation (persists across unmarked/redraw states) */
+  page?: number | null;
   kind?: AnnotationKind;
   balloonNumber: number;
   dimensionType: string;
@@ -90,6 +98,32 @@ export interface DrawingEntry {
   pageCount: number;
 }
 
+export interface PointGroupCalibration {
+  /** Normalized [0..1] X coordinate of the vertical X=0 reference line */
+  xZero: number | null;
+  /** Normalized [0..1] Y coordinate of the horizontal Y=0 reference line */
+  yZero: number | null;
+  /** Normalized [0..1] X coordinate of the calibration anchor point */
+  anchorX: number | null;
+  /** Normalized [0..1] Y coordinate of the calibration anchor point */
+  anchorY: number | null;
+  /** Real-world X value of the anchor relative to X=0 */
+  anchorValX: string;
+  /** Real-world Y value of the anchor relative to Y=0 */
+  anchorValY: string;
+}
+
+export interface PointGroup {
+  id: string;
+  drawingId: string;
+  page: number;
+  name: string;
+  pointIds: string[];
+  collapsed?: boolean;
+  /** Saved Point Entry tool calibration settings so the user can resume adding points */
+  calibration?: PointGroupCalibration | null;
+}
+
 export interface ProjectData {
   schemaVersion: number;
   projectId: string;
@@ -99,6 +133,7 @@ export interface ProjectData {
   parts: Part[];
   drawings: DrawingEntry[];
   dimensions: Dimension[];
+  pointGroups?: PointGroup[];
 }
 
 export interface ImportedPdfPayload {

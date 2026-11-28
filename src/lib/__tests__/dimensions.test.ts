@@ -3,10 +3,21 @@ import {
   createDimension,
   createProjectFromPdf,
   duplicateDimension,
+  duplicateDimensionsBatch,
   findTypeCompletion,
+  formatScopedAnnotationLabel,
   formatTolerance,
+  getAnnotationPage,
+  getAnnotationScopedKey,
+  insertDimensionAtSlot,
+  insertDimensionsAtSlot,
   nextBalloonNumber,
   rememberDimensionType,
+  reorderDimensionList,
+  reorderWithinSection,
+  replaceDrawingDimensionsOrder,
+  resolveAdjacentDimensionId,
+  sortDrawingAnnotations,
   validateDimensionId,
 } from "../dimensions";
 import {
@@ -67,12 +78,15 @@ describe("dimensions", () => {
     expect(second.id).not.toBe(first.id);
   });
 
-  it("formats symmetric, asymmetric, and empty tolerances cleanly", () => {
-    expect(formatTolerance("+0.05", "-0.05")).toBe("±0.05");
+  it("formats symmetric, asymmetric, and inverted-sign tolerances cleanly", () => {
     expect(formatTolerance("0.05", "0.05")).toBe("±0.05");
-    expect(formatTolerance("+0.05", "-0.02")).toBe("+0.05 / -0.02");
-    expect(formatTolerance("+0.05", "")).toBe("+0.05");
-    expect(formatTolerance("", "-0.02")).toBe("-0.02");
+    expect(formatTolerance("0.05", "0.02")).toBe("+0.05 / -0.02");
+    expect(formatTolerance("0.35", "-0.10")).toBe("+0.35 / +0.10");
+    expect(formatTolerance("-0.10", "0.35")).toBe("-0.10 / -0.35");
+    expect(formatTolerance("0.05", "")).toBe("+0.05");
+    expect(formatTolerance("-0.05", "")).toBe("-0.05");
+    expect(formatTolerance("", "0.02")).toBe("-0.02");
+    expect(formatTolerance("", "-0.02")).toBe("+0.02");
     expect(formatTolerance("", "")).toBe("");
   });
 
@@ -240,5 +254,306 @@ describe("dimensions", () => {
     };
     const dupDatum = duplicateDimension(datumA, [datumA]);
     expect(dupDatum.name).toBe("B");
+  });
+
+  it("sorts Datums first, then per-page Notes -> Linear/GD&T -> Points with natural numeric order", () => {
+    const mk = (
+      id: string,
+      kind: Dimension["kind"],
+      name: string,
+      page: number | null,
+    ): Dimension => ({
+      id,
+      drawingId: "d-1",
+      kind,
+      balloonNumber: 1,
+      dimensionType: "",
+      name,
+      quantity: 1,
+      nominal: "",
+      upperTol: "",
+      lowerTol: "",
+      unit: "mm",
+      notes: "",
+      marker:
+        page === null
+          ? null
+          : { drawingId: "d-1", page, x: 0.1, y: 0.1, width: 0.1, height: 0.1 },
+    });
+
+    const input: Dimension[] = [
+      mk("p2-pt10", "point", "P10", 2),
+      mk("p2-dim12", "linear", "12", 2),
+      mk("p1-dim10", "linear", "10", 1),
+      mk("datum-b", "datum", "B", 3),
+      mk("p1-note10", "note", "10", 1),
+      mk("p1-gdt2", "gdt", "2", 1),
+      mk("p2-note2-1", "note", "2-1", 2),
+      mk("p1-pt2", "point", "P2", 1),
+      mk("unplaced-dim", "linear", "1", null),
+      mk("p1-dim1", "linear", "1", 1),
+      mk("p1-nondim2a", "non_dimensional", "2A", 1),
+      mk("p1-dim3", "linear", "3", 1),
+      mk("p1-note2", "note", "2", 1),
+      mk("datum-a", "datum", "A", 1),
+      mk("p1-pt10", "point", "P10", 1),
+      mk("p2-gdt3", "gdt", "3", 2),
+      mk("p2-pt1", "point", "P1", 2),
+      mk("p2-note5", "note", "5", 2),
+      mk("datum-unplaced", "datum", "C", null),
+    ];
+
+    const sortedIds = sortDrawingAnnotations(input).map((d) => d.id);
+    expect(sortedIds).toEqual([
+      "datum-a",
+      "datum-b",
+      "datum-unplaced",
+      "p1-note2",
+      "p1-note10",
+      "p1-dim1",
+      "p1-gdt2",
+      "p1-nondim2a",
+      "p1-dim3",
+      "p1-dim10",
+      "p1-pt2",
+      "p1-pt10",
+      "p2-note2-1",
+      "p2-note5",
+      "p2-gdt3",
+      "p2-dim12",
+      "p2-pt1",
+      "p2-pt10",
+      "unplaced-dim",
+    ]);
+  });
+
+  it("reorders dimensions cleanly by slot index and preserves other drawings", () => {
+    const mk = (id: string, drawingId: string): Dimension => ({
+      id,
+      drawingId,
+      kind: "linear",
+      balloonNumber: 1,
+      dimensionType: "",
+      name: id,
+      quantity: 1,
+      nominal: "",
+      upperTol: "",
+      lowerTol: "",
+      unit: "mm",
+      notes: "",
+      marker: null,
+    });
+
+    const list = [mk("A", "d-1"), mk("B", "d-1"), mk("C", "d-1"), mk("D", "d-1")];
+    expect(reorderDimensionList(list, "A", 2).map((d) => d.id)).toEqual([
+      "B",
+      "A",
+      "C",
+      "D",
+    ]);
+    expect(reorderDimensionList(list, "A", 4).map((d) => d.id)).toEqual([
+      "B",
+      "C",
+      "D",
+      "A",
+    ]);
+    expect(reorderDimensionList(list, "C", 0).map((d) => d.id)).toEqual([
+      "C",
+      "A",
+      "B",
+      "D",
+    ]);
+    expect(reorderDimensionList(list, "B", 1).map((d) => d.id)).toEqual([
+      "A",
+      "B",
+      "C",
+      "D",
+    ]);
+    expect(reorderDimensionList(list, "B", 2).map((d) => d.id)).toEqual([
+      "A",
+      "B",
+      "C",
+      "D",
+    ]);
+
+    const mixed = [
+      mk("X1", "d-2"),
+      mk("A", "d-1"),
+      mk("B", "d-1"),
+      mk("X2", "d-2"),
+      mk("C", "d-1"),
+    ];
+    const reorderedActive = [mk("C", "d-1"), mk("A", "d-1"), mk("B", "d-1")];
+    expect(
+      replaceDrawingDimensionsOrder(mixed, "d-1", reorderedActive).map(
+        (d) => d.id,
+      ),
+    ).toEqual(["X1", "C", "A", "X2", "B"]);
+  });
+
+  it("scopes Point and Note ID uniqueness per page and disambiguates duplicate labels across pages", () => {
+    const mk = (
+      id: string,
+      kind: Dimension["kind"],
+      name: string,
+      page: number | null,
+    ): Dimension => ({
+      id,
+      drawingId: "d-1",
+      kind,
+      balloonNumber: 1,
+      dimensionType: "",
+      name,
+      quantity: 1,
+      nominal: "",
+      upperTol: "",
+      lowerTol: "",
+      unit: "mm",
+      notes: "",
+      marker:
+        page === null
+          ? null
+          : { drawingId: "d-1", page, x: 0.1, y: 0.1, width: 0.1, height: 0.1 },
+    });
+
+    const noteP1 = mk("n-p1", "note", "1", 1);
+    const noteP2 = mk("n-p2", "note", "1", 2);
+    const noteP2Dup = mk("n-p2-dup", "note", "1", 2);
+    const ptP1 = mk("pt-p1", "point", "P1", 1);
+    const ptP2 = mk("pt-p2", "point", "P1", 2);
+    const ptUnique = mk("pt-unique", "point", "P9", 1);
+    const dimP1 = mk("dim-p1", "linear", "100", 1);
+    const dimP2 = mk("dim-p2", "linear", "100", 2);
+
+    const all = [noteP1, noteP2, ptP1, ptP2, ptUnique, dimP1];
+
+    // Same Note # or Point # on DIFFERENT pages is allowed
+    expect(validateDimensionId("1", noteP2.id, [noteP1, noteP2], "note")).toBeNull();
+    expect(validateDimensionId("P1", ptP2.id, [ptP1, ptP2], "point")).toBeNull();
+
+    // Same Note # or Point # on the SAME page is rejected with page info
+    expect(
+      validateDimensionId("1", noteP2Dup.id, [noteP1, noteP2, noteP2Dup], "note"),
+    ).toBe('Note # "1" already exists on P2.');
+
+    // Drawing-wide kinds (Linear) still enforce uniqueness across pages
+    expect(
+      validateDimensionId("100", dimP2.id, [dimP1, dimP2], "linear"),
+    ).toBe('Dimension ID "100" already exists.');
+
+    // Canonical scoped keys uniquely identify per-page Notes & Points
+    expect(getAnnotationScopedKey(noteP1)).toBe("note:p1:1");
+    expect(getAnnotationScopedKey(noteP2)).toBe("note:p2:1");
+    expect(getAnnotationScopedKey(noteP1)).not.toBe(
+      getAnnotationScopedKey(noteP2),
+    );
+
+    // Display label adds (P#) only when duplicates exist across pages
+    expect(formatScopedAnnotationLabel(noteP1, all)).toBe("1 (P1)");
+    expect(formatScopedAnnotationLabel(noteP2, all)).toBe("1 (P2)");
+    expect(formatScopedAnnotationLabel(ptP1, all)).toBe("P1 (P1)");
+    expect(formatScopedAnnotationLabel(ptP2, all)).toBe("P1 (P2)");
+    expect(formatScopedAnnotationLabel(ptUnique, all)).toBe("P9");
+  });
+
+  it("batch-duplicates selected annotations sequentially after the highest existing number", () => {
+    const mkPoint = (id: string, name: string, x: string): Dimension => ({
+      ...createDimension([], "d-1"),
+      id,
+      kind: "point",
+      name,
+      point: { x, y: "5", z: "", datums: ["", "", ""] },
+      marker: { drawingId: "d-1", page: 3, x: 0.2, y: 0.2, width: 0, height: 0 },
+    });
+
+    const c1 = mkPoint("id-1", "C1", "44.88");
+    const c2 = mkPoint("id-2", "C2", "0");
+    const c3 = mkPoint("id-3", "C3", "-44.88");
+    const c4 = mkPoint("id-4", "C4", "10");
+    const c5 = mkPoint("id-5", "C5", "20");
+
+    // When C1..C3 exist and user selects [C3, C2, C1], copies become C4, C5, C6
+    const dups1 = duplicateDimensionsBatch([c3, c2, c1], [c3, c2, c1]);
+    expect(dups1.map((d) => d.name)).toEqual(["C4", "C5", "C6"]);
+    expect(dups1.map((d) => d.point?.x)).toEqual(["44.88", "0", "-44.88"]);
+    expect(dups1.every((d) => d.marker === null)).toBe(true);
+
+    // When C1..C5 exist and user selects [C1, C2, C3], copies become C6, C7, C8
+    const dups2 = duplicateDimensionsBatch(
+      [c1, c2, c3],
+      [c1, c2, c3, c4, c5],
+    );
+    expect(dups2.map((d) => d.name)).toEqual(["C6", "C7", "C8"]);
+    expect(dups2.map((d) => d.point?.x)).toEqual(["44.88", "0", "-44.88"]);
+  });
+
+  it("inserts a new dimension at the requested slot within the active drawing without disturbing other drawings", () => {
+    const mk = (id: string, drawingId: string): Dimension => ({
+      ...createDimension([], drawingId),
+      id,
+      name: id,
+    });
+
+    const mixed = [
+      mk("X1", "d-2"),
+      mk("A", "d-1"),
+      mk("X2", "d-2"),
+      mk("B", "d-1"),
+      mk("C", "d-1"),
+    ];
+    const n = mk("NEW", "d-1");
+
+    // Slot 0 -> right before first active drawing item
+    expect(
+      insertDimensionAtSlot(mixed, "d-1", n, 0).map((d) => d.id),
+    ).toEqual(["X1", "NEW", "A", "X2", "B", "C"]);
+
+    // Slot 1 -> between A and B (right before B)
+    expect(
+      insertDimensionAtSlot(mixed, "d-1", n, 1).map((d) => d.id),
+    ).toEqual(["X1", "A", "X2", "NEW", "B", "C"]);
+
+    // Slot 3 (end) -> right after C
+    expect(
+      insertDimensionAtSlot(mixed, "d-1", n, 3).map((d) => d.id),
+    ).toEqual(["X1", "A", "X2", "B", "C", "NEW"]);
+
+    // Batch insert right after B (slot 2)
+    const batch = [mk("D1", "d-1"), mk("D2", "d-1")];
+    expect(
+      insertDimensionsAtSlot(mixed, "d-1", batch, 2).map((d) => d.id),
+    ).toEqual(["X1", "A", "X2", "B", "D1", "D2", "C"]);
+  });
+
+  it("steps to adjacent dimension IDs with up/down and clamps at boundaries", () => {
+    const mk = (id: string): Dimension => ({
+      ...createDimension([], "d-1"),
+      id,
+      name: id,
+    });
+    const list = [mk("A"), mk("B"), mk("C")];
+
+    expect(resolveAdjacentDimensionId([], null, "down")).toBeNull();
+    expect(resolveAdjacentDimensionId(list, null, "down")).toBe("A");
+    expect(resolveAdjacentDimensionId(list, null, "up")).toBe("C");
+    expect(resolveAdjacentDimensionId(list, "A", "down")).toBe("B");
+    expect(resolveAdjacentDimensionId(list, "C", "down")).toBe("C");
+    expect(resolveAdjacentDimensionId(list, "B", "up")).toBe("A");
+    expect(resolveAdjacentDimensionId(list, "A", "up")).toBe("A");
+  });
+
+  it("reorders strictly within a page section and resolves owning page before placement", () => {
+    const mk = (id: string, page: number): Dimension => ({
+      ...createDimension([], "d-1", page),
+      id,
+      name: id,
+    });
+    const list = [mk("P1-A", 1), mk("P1-B", 1), mk("P2-A", 2), mk("P2-B", 2)];
+    expect(getAnnotationPage(list[0])).toBe(1);
+
+    // Move P2-B to slot 0 of its own section (P2) -> cannot cross into P1
+    expect(
+      reorderWithinSection(list, "P2-B", 0).map((d) => d.id),
+    ).toEqual(["P1-A", "P1-B", "P2-B", "P2-A"]);
   });
 });

@@ -1,5 +1,6 @@
 import type { Part, ProjectData } from "../types/project";
 import { CURRENT_SCHEMA_VERSION } from "./dimensions";
+import { rebindSamePageLinkedPoints } from "./pointGroups";
 
 function generateId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -19,6 +20,7 @@ export function createEmptyProject(name = "Untitled Project"): ProjectData {
     parts: [],
     drawings: [],
     dimensions: [],
+    pointGroups: [],
   };
 }
 
@@ -297,16 +299,19 @@ export function normalizeLoadedProject(project: ProjectData): ProjectData {
     ];
   }
 
-  const dimensions = project.dimensions.map((d) => ({
-    ...d,
-    drawingId: d.drawingId ?? d.marker?.drawingId ?? defaultDrawingId,
-    dimensionType: d.dimensionType ?? "",
-    quantity: d.quantity && d.quantity > 0 ? d.quantity : 1,
-  }));
+  const dimensions = rebindSamePageLinkedPoints(
+    project.dimensions.map((d) => ({
+      ...d,
+      drawingId: d.drawingId ?? d.marker?.drawingId ?? defaultDrawingId,
+      dimensionType: d.dimensionType ?? "",
+      quantity: d.quantity && d.quantity > 0 ? d.quantity : 1,
+    })),
+  );
 
   return {
     ...project,
     parts,
     dimensions,
+    pointGroups: Array.isArray(project.pointGroups) ? project.pointGroups : [],
   };
 }

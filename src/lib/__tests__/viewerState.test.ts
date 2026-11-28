@@ -3,10 +3,16 @@ import {
   computeAnchoredScroll,
   computeCenterRegionScroll,
   computeFitZoom,
+  computeHighlightAutoZoom,
+  computeHighlightUnionRegion,
   computeSafeRenderScale,
   computeVisiblePageCrop,
+  computeWheelPanDelta,
   computeWheelTargetZoom,
+  detectWheelZoomInputMode,
   findMostVisiblePage,
+  resolveViewerKeyAction,
+  resolveViewerToolShortcut,
   shouldApplyFit,
   shouldBlockWindowClose,
   shouldClearDirtyAfterSave,
@@ -68,6 +74,82 @@ describe("viewerState review fixes", () => {
     // Clamps strictly to [0.25, 4]
     expect(computeWheelTargetZoom(4.0, -100)).toBe(4.0);
     expect(computeWheelTargetZoom(0.25, 100)).toBe(0.25);
+  });
+
+  it("boosts zoom sensitivity for macOS trackpad pinch and Cmd+trackpad scroll while keeping spikes bounded", () => {
+    expect(
+      detectWheelZoomInputMode(
+        { ctrlKey: true, metaKey: false, deltaMode: 0, deltaY: -4.5 },
+        true,
+      ),
+    ).toBe("mac_trackpad_pinch");
+    expect(
+      detectWheelZoomInputMode(
+        { ctrlKey: false, metaKey: true, deltaMode: 0, deltaY: -12 },
+        true,
+      ),
+    ).toBe("mac_trackpad_scroll");
+    expect(
+      detectWheelZoomInputMode(
+        { ctrlKey: true, metaKey: false, deltaMode: 0, deltaY: -100 },
+        false,
+      ),
+    ).toBe("default");
+
+    const defaultStep = computeWheelTargetZoom(1.0, -10, 0.25, 5, "default");
+    const macScrollStep = computeWheelTargetZoom(
+      1.0,
+      -10,
+      0.25,
+      5,
+      "mac_trackpad_scroll",
+    );
+    const macPinchStep = computeWheelTargetZoom(
+      1.0,
+      -10,
+      0.25,
+      5,
+      "mac_trackpad_pinch",
+    );
+
+    expect(macScrollStep).toBeGreaterThan(defaultStep);
+    expect(macPinchStep).toBeGreaterThan(macScrollStep);
+
+    // Extreme pinch delta spike stays bounded
+    const cappedPinch = computeWheelTargetZoom(
+      1.0,
+      -500,
+      0.25,
+      5,
+      "mac_trackpad_pinch",
+    );
+    expect(cappedPinch).toBeLessThanOrEqual(1.35);
+  });
+
+  it("computes omnidirectional 2D wheel pan deltas for trackpad and mouse wheel", () => {
+    // Diagonal trackpad gesture preserves both X and Y pixel deltas simultaneously
+    expect(
+      computeWheelPanDelta(
+        { deltaX: 6.5, deltaY: -4.25, deltaMode: 0, shiftKey: false },
+        { width: 1200, height: 800 },
+      ),
+    ).toEqual({ dx: 6.5, dy: -4.25 });
+
+    // Line-mode mouse wheel converts to pixel deltas
+    expect(
+      computeWheelPanDelta(
+        { deltaX: 0, deltaY: 3, deltaMode: 1, shiftKey: false },
+        { width: 1200, height: 800 },
+      ),
+    ).toEqual({ dx: 0, dy: 96 });
+
+    // Shift + vertical mouse wheel pans horizontally
+    expect(
+      computeWheelPanDelta(
+        { deltaX: 0, deltaY: 40, deltaMode: 0, shiftKey: true },
+        { width: 1200, height: 800 },
+      ),
+    ).toEqual({ dx: 40, dy: 0 });
   });
 
   it("keeps the cursor-anchored content point stationary during zoom", () => {
@@ -172,5 +254,127 @@ describe("viewerState review fixes", () => {
     });
     expect(topLeft.left).toBe(0);
     expect(topLeft.top).toBe(0);
+  });
+
+  it("maps plain c/v keys to hand/text tools while ignoring modifiers and form inputs", () => {
+    const base = {
+      metaKey: false,
+      ctrlKey: false,
+      altKey: false,
+      isComposing: false,
+      targetTagName: "DIV",
+      targetIsContentEditable: false,
+    };
+
+    expect(resolveViewerToolShortcut({ ...base, key: "c" })).toBe("hand");
+    expect(resolveViewerToolShortcut({ ...base, key: "C" })).toBe("hand");
+    expect(resolveViewerToolShortcut({ ...base, key: "v" })).toBe("text");
+    expect(resolveViewerToolShortcut({ ...base, key: "V" })).toBe("text");
+    expect(resolveViewerToolShortcut({ ...base, key: "x" })).toBeNull();
+
+    // Extended key actions: C/V/P/M tools, WASD pan, Q/E zoom
+    expect(resolveViewerKeyAction({ ...base, key: "c" })).toEqual({
+      type: "tool",
+      tool: "hand",
+    });
+    expect(resolveViewerKeyAction({ ...base, key: "p" })).toEqual({
+      type: "points",
+    });
+    expect(resolveViewerKeyAction({ ...base, key: "m" })).toEqual({
+      type: "move",
+    });
+    expect(resolveViewerKeyAction({ ...base, key: "q" })).toEqual({
+      type: "zoom",
+      direction: "out",
+    });
+    expect(resolveViewerKeyAction({ ...base, key: "e" })).toEqual({
+      type: "zoom",
+      direction: "in",
+    });
+    expect(resolveViewerKeyAction({ ...base, key: "r" })).toEqual({
+      type: "fit",
+    });
+    expect(resolveViewerKeyAction({ ...base, key: "w" })).toEqual({
+      type: "pan",
+      key: "w",
+    });
+    expect(
+      resolveViewerKeyAction({ ...base, key: "q", targetTagName: "INPUT" }),
+    ).toBeNull();
+
+    // Must not hijack Cmd/Ctrl+C or Cmd/Ctrl+V copy/paste
+    expect(
+      resolveViewerToolShortcut({ ...base, key: "c", metaKey: true }),
+    ).toBeNull();
+    expect(
+      resolveViewerToolShortcut({ ...base, key: "v", ctrlKey: true }),
+    ).toBeNull();
+    expect(
+      resolveViewerToolShortcut({ ...base, key: "c", altKey: true }),
+    ).toBeNull();
+
+    // Must not fire during IME composition or inside editable form fields
+    expect(
+      resolveViewerToolShortcut({ ...base, key: "c", isComposing: true }),
+    ).toBeNull();
+    expect(
+      resolveViewerToolShortcut({ ...base, key: "v", targetTagName: "INPUT" }),
+    ).toBeNull();
+    expect(
+      resolveViewerToolShortcut({
+        ...base,
+        key: "c",
+        targetTagName: "TEXTAREA",
+      }),
+    ).toBeNull();
+    expect(
+      resolveViewerToolShortcut({ ...base, key: "v", targetTagName: "SELECT" }),
+    ).toBeNull();
+    expect(
+      resolveViewerToolShortcut({
+        ...base,
+        key: "c",
+        targetIsContentEditable: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("computes union bounding box for a dimension plus linked points and notes and auto-zooms out when clipped", () => {
+    const union = computeHighlightUnionRegion(
+      { x: 0.2, y: 0.2, width: 0.1, height: 0.05 },
+      [
+        { x: 0.7, y: 0.6, width: 0, height: 0 }, // linked Point
+        { x: 0.1, y: 0.1, width: 0.3, height: 0.04 }, // linked Note
+      ],
+    );
+    expect(union.x).toBeCloseTo(0.1, 4);
+    expect(union.y).toBeCloseTo(0.1, 4);
+    expect(union.x + union.width).toBeCloseTo(0.715, 4);
+    expect(union.y + union.height).toBeCloseTo(0.6125, 4);
+
+    // At zoom=2.0 on a 1000x800 base page, a 0.6x0.5 union needs 1200x800px which clips in 800x600 viewport -> zooms out
+    const zoomedOut = computeHighlightAutoZoom({
+      currentZoom: 2.0,
+      viewportWidth: 800,
+      viewportHeight: 600,
+      basePageWidth: 1000,
+      basePageHeight: 800,
+      regionWidth: 0.6,
+      regionHeight: 0.5,
+    });
+    // usableW=640 / 600 = 1.0667, usableH=480 / 400 = 1.2 -> 1.0667
+    expect(zoomedOut).toBeCloseTo(640 / 600, 4);
+
+    // When already zoomed out enough (0.75 < 1.0667), keeps currentZoom unchanged
+    const kept = computeHighlightAutoZoom({
+      currentZoom: 0.75,
+      viewportWidth: 800,
+      viewportHeight: 600,
+      basePageWidth: 1000,
+      basePageHeight: 800,
+      regionWidth: 0.6,
+      regionHeight: 0.5,
+    });
+    expect(kept).toBe(0.75);
   });
 });

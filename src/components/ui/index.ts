@@ -7,6 +7,7 @@ export {
 } from "./Button";
 export { cn } from "./cn";
 export { EmptyState, type EmptyStateProps } from "./EmptyState";
+export { FloatingMenu, type FloatingMenuProps } from "./FloatingMenu";
 export {
   IconButton,
   type IconButtonProps,

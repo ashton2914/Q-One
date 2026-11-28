@@ -1,3 +1,82 @@
+export type ViewerTool = "hand" | "text";
+
+export interface ToolShortcutEventLike {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  isComposing?: boolean;
+  targetTagName?: string | null;
+  targetIsContentEditable?: boolean;
+}
+
+export function resolveViewerToolShortcut(
+  event: ToolShortcutEventLike,
+): ViewerTool | null {
+  if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing) {
+    return null;
+  }
+  const tag = event.targetTagName?.toUpperCase();
+  if (
+    tag === "INPUT" ||
+    tag === "TEXTAREA" ||
+    tag === "SELECT" ||
+    event.targetIsContentEditable
+  ) {
+    return null;
+  }
+  const lower = event.key.toLowerCase();
+  if (lower === "c") return "hand";
+  if (lower === "v") return "text";
+  return null;
+}
+
+export type ViewerPanKey = "w" | "a" | "s" | "d";
+
+export type ViewerKeyAction =
+  | { type: "tool"; tool: ViewerTool }
+  | { type: "points" }
+  | { type: "move" }
+  | { type: "zoom"; direction: "in" | "out" }
+  | { type: "fit" }
+  | { type: "pan"; key: ViewerPanKey };
+
+/**
+ * Resolves single-key PDF viewer shortcuts:
+ * - C: Pan (Hand), V: Text Selection, P: Points, M: Batch Move
+ * - W/A/S/D: Smooth viewport panning
+ * - Q: Zoom In, E: Zoom Out
+ * Ignores events inside text inputs, during IME composition, or with modifier keys.
+ */
+export function resolveViewerKeyAction(
+  event: ToolShortcutEventLike,
+): ViewerKeyAction | null {
+  if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing) {
+    return null;
+  }
+  const tag = event.targetTagName?.toUpperCase();
+  if (
+    tag === "INPUT" ||
+    tag === "TEXTAREA" ||
+    tag === "SELECT" ||
+    event.targetIsContentEditable
+  ) {
+    return null;
+  }
+  const lower = event.key.toLowerCase();
+  if (lower === "c") return { type: "tool", tool: "hand" };
+  if (lower === "v") return { type: "tool", tool: "text" };
+  if (lower === "p") return { type: "points" };
+  if (lower === "m") return { type: "move" };
+  if (lower === "q") return { type: "zoom", direction: "out" };
+  if (lower === "e") return { type: "zoom", direction: "in" };
+  if (lower === "r") return { type: "fit" };
+  if (lower === "w" || lower === "a" || lower === "s" || lower === "d") {
+    return { type: "pan", key: lower };
+  }
+  return null;
+}
+
 export interface PageDimensions {
   width: number;
   height: number;
@@ -71,16 +150,86 @@ export function findMostVisiblePage(
   return bestPage;
 }
 
+export type WheelZoomInputMode =
+  | "default"
+  | "mac_trackpad_pinch"
+  | "mac_trackpad_scroll";
+
+export function detectWheelZoomInputMode(
+  event: {
+    ctrlKey: boolean;
+    metaKey: boolean;
+    deltaMode: number;
+    deltaY: number;
+  },
+  isMacPlatform: boolean,
+): WheelZoomInputMode {
+  if (!isMacPlatform || event.deltaMode !== 0) return "default";
+  // macOS trackpad two-finger pinch dispatches synthetic ctrlKey=true, metaKey=false, pixel-mode wheel events.
+  if (event.ctrlKey && !event.metaKey) return "mac_trackpad_pinch";
+  // macOS Cmd + two-finger trackpad scroll emits fine continuous pixel deltas.
+  if (event.metaKey && Math.abs(event.deltaY) < 40) return "mac_trackpad_scroll";
+  return "default";
+}
+
 export function computeWheelTargetZoom(
   currentTargetZoom: number,
   deltaY: number,
   minZoom = 0.25,
   maxZoom = 4,
+  inputMode: WheelZoomInputMode = "default",
 ): number {
-  const clampedDelta = Math.max(-80, Math.min(80, deltaY));
-  const factor = Math.exp(-clampedDelta * 0.0018);
+  const sensitivity =
+    inputMode === "mac_trackpad_pinch"
+      ? 0.0055
+      : inputMode === "mac_trackpad_scroll"
+        ? 0.003
+        : 0.0018;
+  const maxAbsDelta = inputMode === "mac_trackpad_pinch" ? 50 : 80;
+  const clampedDelta = Math.max(-maxAbsDelta, Math.min(maxAbsDelta, deltaY));
+  const factor = Math.exp(-clampedDelta * sensitivity);
   const next = currentTargetZoom * factor;
   return Math.min(maxZoom, Math.max(minZoom, next));
+}
+
+export interface WheelPanDelta {
+  dx: number;
+  dy: number;
+}
+
+export function computeWheelPanDelta(
+  event: {
+    deltaX: number;
+    deltaY: number;
+    deltaMode: number;
+    shiftKey: boolean;
+  },
+  viewportSize: { width: number; height: number },
+): WheelPanDelta {
+  const linePx = 32;
+  const scaleX =
+    event.deltaMode === 1
+      ? linePx
+      : event.deltaMode === 2
+        ? Math.max(100, viewportSize.width * 0.85)
+        : 1;
+  const scaleY =
+    event.deltaMode === 1
+      ? linePx
+      : event.deltaMode === 2
+        ? Math.max(100, viewportSize.height * 0.85)
+        : 1;
+
+  let dx = event.deltaX * scaleX;
+  let dy = event.deltaY * scaleY;
+
+  // Shift + vertical wheel (e.g. standard mouse wheel) pans horizontally
+  if (event.shiftKey && dx === 0 && dy !== 0) {
+    dx = dy;
+    dy = 0;
+  }
+
+  return { dx, dy };
 }
 
 export function computeAnchoredScroll(
@@ -201,4 +350,115 @@ export function computeCenterRegionScroll(input: CenterRegionScrollInput): {
   const left = Math.min(maxLeft, Math.max(0, centerX - input.viewportWidth / 2));
   const top = Math.min(maxTop, Math.max(0, centerY - input.viewportHeight / 2));
   return { left, top };
+}
+
+export interface NormalizedRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+const POINT_HALO_W = 0.03;
+const POINT_HALO_H = 0.025;
+
+/**
+ * Computes the union normalized bounding box covering a primary marker
+ * plus all same-page linked markers (Points and Notes), adding a small visual halo
+ * for zero-sized Point markers so their dots and label badges stay inside the viewport.
+ */
+export function computeHighlightUnionRegion(
+  primary: NormalizedRegion,
+  linked: readonly NormalizedRegion[],
+): NormalizedRegion {
+  const toVisualBox = (r: NormalizedRegion) => {
+    if (r.width <= 0 || r.height <= 0) {
+      return {
+        left: Math.max(0, r.x - POINT_HALO_W / 2),
+        top: Math.max(0, r.y - POINT_HALO_H / 2),
+        right: Math.min(1, r.x + POINT_HALO_W / 2),
+        bottom: Math.min(1, r.y + POINT_HALO_H / 2),
+      };
+    }
+    return {
+      left: Math.max(0, r.x),
+      top: Math.max(0, r.y),
+      right: Math.min(1, r.x + r.width),
+      bottom: Math.min(1, r.y + r.height),
+    };
+  };
+
+  let union = toVisualBox(primary);
+  for (const item of linked) {
+    const b = toVisualBox(item);
+    union = {
+      left: Math.min(union.left, b.left),
+      top: Math.min(union.top, b.top),
+      right: Math.max(union.right, b.right),
+      bottom: Math.max(union.bottom, b.bottom),
+    };
+  }
+
+  return {
+    x: union.left,
+    y: union.top,
+    width: Math.max(0.01, union.right - union.left),
+    height: Math.max(0.01, union.bottom - union.top),
+  };
+}
+
+export interface HighlightAutoZoomParams {
+  currentZoom: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  basePageWidth: number;
+  basePageHeight: number;
+  regionWidth: number;
+  regionHeight: number;
+  paddingRatio?: number;
+  minZoom?: number;
+  maxZoom?: number;
+}
+
+/**
+ * Computes the zoom level needed so a highlighted union region (dimension + linked Points + linked Notes)
+ * fits comfortably inside the viewport. Never zooms in beyond `currentZoom`; only zooms out when the
+ * union region would otherwise be clipped at the current zoom.
+ */
+export function computeHighlightAutoZoom(
+  params: HighlightAutoZoomParams,
+): number {
+  const {
+    currentZoom,
+    viewportWidth,
+    viewportHeight,
+    basePageWidth,
+    basePageHeight,
+    regionWidth,
+    regionHeight,
+    paddingRatio = 0.8,
+    minZoom = 0.25,
+    maxZoom = 8,
+  } = params;
+
+  if (
+    viewportWidth <= 0 ||
+    viewportHeight <= 0 ||
+    basePageWidth <= 0 ||
+    basePageHeight <= 0 ||
+    regionWidth <= 0 ||
+    regionHeight <= 0
+  ) {
+    return currentZoom;
+  }
+
+  const usableW = Math.max(1, viewportWidth * paddingRatio);
+  const usableH = Math.max(1, viewportHeight * paddingRatio);
+  const regionBaseW = Math.max(1, regionWidth * basePageWidth);
+  const regionBaseH = Math.max(1, regionHeight * basePageHeight);
+
+  const fitZoom = Math.min(usableW / regionBaseW, usableH / regionBaseH);
+  const clampedFit = Math.max(minZoom, Math.min(maxZoom, fitZoom));
+
+  return currentZoom > clampedFit ? clampedFit : currentZoom;
 }
